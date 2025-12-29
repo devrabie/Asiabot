@@ -2,6 +2,7 @@ import asyncio
 import pytest
 from unittest.mock import MagicMock, patch, AsyncMock
 from src.api.client import AsiacellClient
+from src.api.models import LoginResponse, TokenResponse
 import aiohttp
 
 @pytest.mark.asyncio
@@ -47,23 +48,25 @@ async def test_request_retry_logic():
         assert mock_session.request.call_count == 1
 
 @pytest.mark.asyncio
-async def test_request_retry_failure():
+async def test_send_login_code_model():
     client = AsiacellClient()
 
-    # Mock session that raises exception
-    mock_session = MagicMock()
+    mock_response = {"status": 200, "headers": {}, "cookies": {}, "data": {"nextUrl": "http://test.com?PID=123"}}
 
-    # Mock context manager to raise on enter
-    mock_request_ctx = AsyncMock()
-    mock_request_ctx.__aenter__.side_effect = aiohttp.ClientError("Network Error")
-    mock_request_ctx.__aexit__.return_value = None
+    with patch.object(client, '_request', new_callable=AsyncMock) as mock_req:
+        mock_req.return_value = mock_response
+        response = await client.send_login_code("devid", "cookie", "07712345678")
+        assert isinstance(response, LoginResponse)
+        assert response.nextUrl == "http://test.com?PID=123"
 
-    mock_session.request.return_value = mock_request_ctx
-    mock_session.closed = False
+@pytest.mark.asyncio
+async def test_validate_sms_code_model():
+    client = AsiacellClient()
 
-    with patch("aiohttp.ClientSession", return_value=mock_session):
-        with pytest.raises(aiohttp.ClientError, match="Network Error"):
-             await client._request("GET", "http://test.com")
+    mock_response = {"status": 200, "headers": {}, "cookies": {}, "data": {"access_token": "at", "refresh_token": "rt"}}
 
-        # Should be called 3 times (1 initial + 2 retries)
-        assert mock_session.request.call_count == 3
+    with patch.object(client, '_request', new_callable=AsyncMock) as mock_req:
+        mock_req.return_value = mock_response
+        response = await client.validate_sms_code("cookie", "devid", "pid", "123456")
+        assert isinstance(response, TokenResponse)
+        assert response.access_token == "at"

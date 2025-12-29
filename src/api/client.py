@@ -2,8 +2,9 @@ import asyncio
 import uuid
 import random
 import aiohttp
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any, List, Union
 from loguru import logger
+from src.api.models import LoginResponse, TokenResponse
 
 class AsiacellClient:
     BASE_URL = "https://odpapp.asiacell.com/api"
@@ -25,6 +26,13 @@ class AsiacellClient:
     def __init__(self, proxy_file: str = "data/proxies.txt"):
         self.proxies: List[str] = self._load_proxies(proxy_file)
         self.session: Optional[aiohttp.ClientSession] = None
+
+    async def __aenter__(self):
+        await self._get_session()
+        return self
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        await self.close()
 
     def _load_proxies(self, filepath: str) -> List[str]:
         try:
@@ -110,18 +118,13 @@ class AsiacellClient:
     async def get_login_cookie(self) -> str:
         url = f"{self.BASE_URL}/v1/login-screen?lang=ar"
         response = await self._request("GET", url)
-        # Assuming the caller needs the raw Set-Cookie header value
         headers = response.get("headers", {})
-        # Headers are case-insensitive in aiohttp but dict conversion might not be.
-        # But multidict usually handles case insensitive lookups.
-        # However we converted to dict.
-        # Let's try to find it safely.
         for k, v in headers.items():
             if k.lower() == "set-cookie":
                 return v
         return ""
 
-    async def send_login_code(self, device_id: str, cookie: str, phone_number: str) -> Any:
+    async def send_login_code(self, device_id: str, cookie: str, phone_number: str) -> LoginResponse:
         url = f"{self.BASE_URL}/v1/login?lang=ar"
 
         headers = {
@@ -135,9 +138,9 @@ class AsiacellClient:
         }
 
         response = await self._request("POST", url, headers=headers, json=body)
-        return response.get("data")
+        return LoginResponse.model_validate(response.get("data", {}))
 
-    async def validate_sms_code(self, session_cookie: str, device_id: str, pid: str, otp_code: str) -> Dict[str, str]:
+    async def validate_sms_code(self, session_cookie: str, device_id: str, pid: str, otp_code: str) -> TokenResponse:
         url = f"{self.BASE_URL}/v1/smsvalidation?lang=ar"
 
         headers = {
@@ -152,10 +155,7 @@ class AsiacellClient:
         }
 
         response = await self._request("POST", url, headers=headers, json=body)
-        data = response.get("data", {})
-        if isinstance(data, dict):
-             return data
-        return {}
+        return TokenResponse.model_validate(response.get("data", {}))
 
     async def get_balance(self, access_token: str, device_id: str, cookie: str) -> Any:
         url = f"{self.BASE_URL}/v2/home?lang=ar"
