@@ -260,10 +260,26 @@ async def set_primary_receiver_handler(update: Update, context: ContextTypes.DEF
 
 async def start_recharge(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Starts the recharge conversation."""
+    user_id = get_effective_user_id(update.effective_user.id)
+    db = DBManager()
+    accounts = await db.get_user_accounts(user_id)
+
+    if not accounts:
+        text = "❌ لا توجد حسابات مضافة. الرجاء إضافة رقم آسياسيل أولاً."
+        keyboard = [[InlineKeyboardButton("➕ إضافة حساب جديد", callback_data="add_account_start")]]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+
+        if update.callback_query:
+            await update.callback_query.answer()
+            await update.callback_query.message.reply_text(text, reply_markup=reply_markup)
+        else:
+            await update.message.reply_text(text, reply_markup=reply_markup)
+        return ConversationHandler.END
+
     text = (
         "💳 **شحن رصيد**\n\n"
         "قم بإرسال رقم الكارت (14 أو 15 رقم).\n"
-        "يمكنك إرسال الرقم كتابةً."
+        "يمكنك إرسال رقم الكارت كتابةً أو صورة الكارت."
     )
     if update.callback_query:
         await update.callback_query.answer()
@@ -307,7 +323,7 @@ async def recharge_input_handler(update: Update, context: ContextTypes.DEFAULT_T
     try:
         recharge_manager = RechargeManager()
         result_message = await recharge_manager.process_smart_recharge(user_id, code)
-        await msg.edit_text(result_message)
+        await msg.edit_text(result_message, parse_mode="Markdown")
     except Exception as e:
         logger.exception(f"Recharge failed: {e}")
         await msg.edit_text(f"❌ حدث خطأ غير متوقع: {e}")
