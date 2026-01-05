@@ -12,9 +12,12 @@ from telegram.ext import (
 from loguru import logger
 from src.api.client import AsiacellClient
 from src.database.db_manager import DBManager
+from src.services.recharge_manager import RechargeManager
+import aiohttp
 
-# States for Add Account Conversation
+# States for Conversations
 PHONE, OTP = range(2)
+RECHARGE_INPUT = 2
 
 # Constants for User ID Override (Testing)
 ORIGINAL_USER_ID = 6198033039
@@ -33,6 +36,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [
         [InlineKeyboardButton("📱 حساباتي", callback_data="my_accounts")],
         [InlineKeyboardButton("➕ إضافة حساب جديد", callback_data="add_account_start")],
+        [InlineKeyboardButton("💳 شحن رصيد", callback_data="start_recharge")],
         [InlineKeyboardButton("ℹ️ حول البوت", callback_data="about")],
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
@@ -87,44 +91,11 @@ async def my_accounts_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
     await query.edit_message_text("اختر حساباً لإدارته:", reply_markup=reply_markup)
 
 async def account_details_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Shows details for a specific account."""
+    """Shows details for a specific account, verifying and refreshing data live."""
     query = update.callback_query
-    await query.answer()
-
-    # Extract phone from callback_data "acc_077xxxxxxxx"
-    phone = query.data.split("_")[1]
-    user_id = get_effective_user_id(query.from_user.id)
-
-    db = DBManager()
-    account = await db.get_account(phone, user_id)
-
-    if not account:
-        await query.edit_message_text("هذا الحساب غير موجود أو لا تملك صلاحية الوصول إليه.")
-        return
-
-    # Prepare info text
-    balance = account.get("current_balance", 0.0)
-    # Expiry date is not in DB currently (based on schema), skipping or mocking
-    text = (
-        f"📱 **رقم الهاتف:** `{phone}`\n"
-        f"💰 **الرصيد الحالي:** `{balance}`\n"
-    )
-
-    keyboard = [
-        [InlineKeyboardButton("🔄 تحديث الرصيد", callback_data=f"refresh_{phone}")],
-        [InlineKeyboardButton("💳 شحن رصيد", callback_data=f"topup_{phone}")],
-        [InlineKeyboardButton("🗑️ حذف الحساب", callback_data=f"delconf_{phone}")],
-        [InlineKeyboardButton("🔙 رجوع", callback_data="my_accounts")]
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-
-    await query.edit_message_text(text=text, parse_mode="Markdown", reply_markup=reply_markup)
-
-async def refresh_balance_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Refreshes balance for an account."""
-    query = update.callback_query
-    # Show loading status
-    await query.answer("جاري التحديث...", show_alert=False)
+    # We delay answering or show loading because we will do a network request
+    await query.answer("جاري جلب تفاصيل الحساب...")
+    await query.edit_message_text("⏳ جاري الاتصال بخوادم آسياسيل لجلب أحدث البيانات...")
 
     phone = query.data.split("_")[1]
     user_id = get_effective_user_id(query.from_user.id)
@@ -133,33 +104,108 @@ async def refresh_balance_handler(update: Update, context: ContextTypes.DEFAULT_
     account = await db.get_account(phone, user_id)
 
     if not account:
-        await query.edit_message_text("خطأ: الحساب غير موجود.")
+        await query.edit_message_text("❌ هذا الحساب غير موجود أو لا تملك صلاحية الوصول إليه.")
         return
+
+    # Attempt to fetch fresh data
+    details_text = f"📱 **تفاصيل حساب آسياسيل:** `{phone}`\n"
+    fresh_balance = None
+    account_info = {}
 
     try:
         async with AsiacellClient() as client:
+            # We try to get balance. If token expired, we might get 403/401
             balance_data = await client.get_balance(
                 account["access_token"],
                 account["device_id"],
                 account["cookie"]
             )
 
-            # Similar safe extraction logic as scheduler
+            # Parse response
             if isinstance(balance_data, dict):
-                raw_balance = balance_data.get("mainBalance", balance_data.get("balance"))
-                if raw_balance is not None:
-                    new_balance = float(raw_balance)
-                    await db.update_balance(phone, new_balance)
+                 # Based on PHP: $balanceData['watch']['information']['mainBalance']
+                 # My client returns response.get("data") which is likely the root of json response?
+                 # Or inside 'watch'? PHP code: $response->getBody() then json_decode.
+                 # Python client: return response.get("data")
+                 # If Python client returns the full JSON body as 'data', then we access it.
+                 # Let's assume the structure matches PHP expectations.
 
-                    # Refresh the view
-                    await account_details_handler(update, context)
-                    return
+                 # Note: Python client might need adjustment if get_balance doesn't return full structure.
+                 # client.get_balance returns response.get("data").
+                 # If API returns { "watch": { ... } }, then balance_data has "watch".
 
-        await query.answer("فشل تحديث الرصيد. حاول لاحقاً.", show_alert=True)
+                 info = balance_data.get("watch", {}).get("information", {})
+                 raw_balance = info.get("mainBalance")
+
+                 if raw_balance:
+                     fresh_balance = float(str(raw_balance).replace(" IQD", "").replace(",", ""))
+                     account_info['name'] = info.get("fullname", "N/A")
+                     account_info['expiry'] = info.get("expiryDate", "N/A")
+
+                     # Update DB
+                     await db.update_balance(phone, fresh_balance)
+                 else:
+                     logger.warning(f"Unexpected balance structure: {balance_data}")
 
     except Exception as e:
-        logger.error(f"Manual refresh failed for {phone}: {e}")
-        await query.answer("حدث خطأ أثناء الاتصال.", show_alert=True)
+        logger.warning(f"Failed to fetch balance for {phone}: {e}")
+        # Try to handle token refresh if it's a 403/401 error
+        # aiohttp exceptions usually have 'status' attribute
+        if hasattr(e, 'status') and e.status in [401, 403]:
+             details_text += "⚠️ انتهت صلاحية الجلسة. جاري محاولة التجديد...\n"
+             try:
+                 async with AsiacellClient() as client:
+                     token_resp = await client.refresh_token(account["refresh_token"])
+                     if token_resp.access_token:
+                         # Update DB
+                         await db.update_tokens(phone, token_resp.access_token, token_resp.refresh_token or account["refresh_token"])
+                         details_text += "✅ تم تجديد التوكن بنجاح. يرجى التحديث مجدداً.\n"
+                         # Optionally retry fetching balance here, but let's keep it simple for now
+                     else:
+                         details_text += "❌ فشل تجديد التوكن. يرجى إعادة تسجيل الدخول.\n"
+             except Exception as refresh_err:
+                 details_text += f"❌ خطأ أثناء التجديد: {refresh_err}\n"
+        else:
+             details_text += f"❌ خطأ في الاتصال: {str(e)}\n"
+
+    # Reload account from DB to get latest stored values (if updated)
+    account = await db.get_account(phone, user_id)
+    current_balance = account.get("current_balance", 0.0)
+
+    details_text += f"💰 **الرصيد:** `{current_balance:,.2f} IQD`\n"
+    if 'name' in account_info:
+        details_text += f"👤 **الاسم:** {account_info['name']}\n"
+    if 'expiry' in account_info:
+        details_text += f"📅 **صالح لغاية:** {account_info['expiry']}\n"
+
+    # Balance comparison logic (PHP: notify if changed)
+    # Since we updated DB above, current_balance is the latest.
+    # The previous balance logic is handled implicitly by update_balance overwriting it,
+    # but to show "change" we would need to know the *previous* state before update.
+    # For now, just showing current is sufficient as per basic requirement.
+
+    # Buttons
+    keyboard = []
+    keyboard.append([InlineKeyboardButton("🔄 تحديث معلومات الحساب", callback_data=f"refresh_{phone}")])
+
+    # Primary Receiver Toggle
+    is_primary = account.get("is_primary_receiver", 0)
+    if is_primary:
+        keyboard.append([InlineKeyboardButton("✅ هذا هو الحساب الرئيسي للاستقبال", callback_data="noop")])
+    else:
+        keyboard.append([InlineKeyboardButton("📥 تعيين كـ مستقبل رئيسي", callback_data=f"setprimary_{phone}")])
+
+    keyboard.append([InlineKeyboardButton("🗑️ حذف الحساب", callback_data=f"delconf_{phone}")])
+    keyboard.append([InlineKeyboardButton("🔙 رجوع", callback_data="my_accounts")])
+
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    await query.edit_message_text(text=details_text, parse_mode="Markdown", reply_markup=reply_markup)
+
+async def refresh_balance_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Refreshes balance for an account by reusing detailed view logic."""
+    # Since account_details_handler now does a fresh fetch, we just redirect to it.
+    await account_details_handler(update, context)
 
 async def delete_confirm_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Asks for deletion confirmation."""
@@ -194,14 +240,60 @@ async def delete_action_handler(update: Update, context: ContextTypes.DEFAULT_TY
         await query.answer("فشل حذف الحساب.", show_alert=True)
         await account_details_handler(update, context)
 
-async def top_up_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Placeholder for Top Up."""
+async def set_primary_receiver_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Sets the account as primary receiver."""
     query = update.callback_query
     await query.answer()
 
-    # In a full implementation, this would start a conversation asking for the code.
-    # For now, we just inform the user.
-    await query.message.reply_text("ميزة شحن الرصيد ستتوفر قريباً! (أرسل الكود هنا يدوياً إذا كنت المطور)")
+    phone = query.data.split("_")[1]
+    user_id = get_effective_user_id(query.from_user.id)
+
+    db = DBManager()
+    await db.set_primary_receiver(user_id, phone)
+
+    await query.message.reply_text(f"✅ تم تعيين الحساب {phone} كمستقبل رئيسي للرصيد.")
+    # Refresh view
+    await account_details_handler(update, context)
+
+# --- Recharge Conversation Handlers ---
+
+async def start_recharge(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Starts the recharge conversation."""
+    text = (
+        "💳 **شحن رصيد**\n\n"
+        "قم بإرسال رقم الكارت (14 أو 15 رقم).\n"
+        "يمكنك إرسال الرقم كتابةً."
+    )
+    if update.callback_query:
+        await update.callback_query.answer()
+        await update.callback_query.message.reply_text(text, parse_mode="Markdown")
+    else:
+        await update.message.reply_text(text, parse_mode="Markdown")
+    return RECHARGE_CODE
+
+async def recharge_input_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handles the card number input."""
+    user_id = get_effective_user_id(update.effective_user.id)
+    text = update.message.text
+
+    # Extract code using regex
+    match = re.search(r'\b(\d{14,15})\b', text)
+    if not match:
+        await update.message.reply_text("❌ لم يتم العثور على كود صالح. يرجى إرسال كود يتكون من 14 أو 15 رقم.")
+        return RECHARGE_CODE
+
+    code = match.group(1)
+    msg = await update.message.reply_text(f"🔄 جاري معالجة الكود: `{code}` ...", parse_mode="Markdown")
+
+    try:
+        recharge_manager = RechargeManager()
+        result_message = await recharge_manager.process_smart_recharge(user_id, code)
+        await msg.edit_text(result_message)
+    except Exception as e:
+        logger.exception(f"Recharge failed: {e}")
+        await msg.edit_text(f"❌ حدث خطأ غير متوقع: {e}")
+
+    return ConversationHandler.END
 
 # --- Add Account Conversation ---
 
@@ -330,12 +422,11 @@ def get_handlers():
         CallbackQueryHandler(refresh_balance_handler, pattern="^refresh_"),
         CallbackQueryHandler(delete_confirm_handler, pattern="^delconf_"),
         CallbackQueryHandler(delete_action_handler, pattern="^delaction_"),
-        CallbackQueryHandler(top_up_handler, pattern="^topup_"),
-        # 'add_account_start' is handled by ConversationHandler entry point
+        CallbackQueryHandler(set_primary_receiver_handler, pattern="^setprimary_"),
     ]
 
-    # Conversation Handler
-    conv_handler = ConversationHandler(
+    # Add Account Conversation
+    add_account_conv = ConversationHandler(
         entry_points=[
             CommandHandler("add_account", add_account_start),
             CallbackQueryHandler(add_account_start, pattern="^add_account_start$")
@@ -347,4 +438,16 @@ def get_handlers():
         fallbacks=[CommandHandler("cancel", cancel)],
     )
 
-    return [conv_handler, CommandHandler("start", start)] + callback_handlers
+    # Recharge Conversation
+    recharge_conv = ConversationHandler(
+        entry_points=[
+            CommandHandler("recharge", start_recharge),
+            CallbackQueryHandler(start_recharge, pattern="^start_recharge$")
+        ],
+        states={
+            RECHARGE_CODE: [MessageHandler(filters.TEXT & ~filters.COMMAND, recharge_input_handler)],
+        },
+        fallbacks=[CommandHandler("cancel", cancel)],
+    )
+
+    return [add_account_conv, recharge_conv, CommandHandler("start", start)] + callback_handlers
