@@ -238,7 +238,9 @@ async def phone_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             pid = query_params.get("PID", [None])[0]
 
             if not pid:
-                 await msg.edit_text("فشل استخراج PID.")
+                 debug_info = f"NextUrl: {next_url}\nResponse: {login_response}"
+                 logger.error(f"Failed to extract PID. {debug_info}")
+                 await msg.edit_text(f"فشل استخراج PID.\n\nDebug Info:\n{debug_info}")
                  return ConversationHandler.END
 
             context.user_data["pid"] = pid
