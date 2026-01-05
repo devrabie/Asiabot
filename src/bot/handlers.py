@@ -237,6 +237,13 @@ async def phone_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             query_params = urllib.parse.parse_qs(parsed_url.query)
             pid = query_params.get("PID", [None])[0]
 
+            if not pid and parsed_url.fragment:
+                # Handle fragment-based URLs (e.g., #/path?PID=...)
+                fragment_parts = parsed_url.fragment.split("?", 1)
+                if len(fragment_parts) > 1:
+                    fragment_query = urllib.parse.parse_qs(fragment_parts[1])
+                    pid = fragment_query.get("PID", [None])[0]
+
             if not pid:
                  debug_info = f"NextUrl: {next_url}\nResponse: {login_response}"
                  logger.error(f"Failed to extract PID. {debug_info}")
