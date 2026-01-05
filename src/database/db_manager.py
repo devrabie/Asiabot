@@ -23,6 +23,7 @@ class DBManager:
             schema = f.read()
 
         async with aiosqlite.connect(self.db_path) as db:
+            await db.execute("PRAGMA foreign_keys = ON")
             await db.executescript(schema)
             await db.commit()
             logger.info("Database initialized successfully.")
@@ -30,6 +31,7 @@ class DBManager:
     async def create_user_if_not_exists(self, telegram_id: int):
         """Create a user if they don't exist."""
         async with aiosqlite.connect(self.db_path) as db:
+            await db.execute("PRAGMA foreign_keys = ON")
             await db.execute(
                 "INSERT OR IGNORE INTO users (telegram_id) VALUES (?)",
                 (telegram_id,)
@@ -50,6 +52,7 @@ class DBManager:
         await self.create_user_if_not_exists(user_id)
 
         async with aiosqlite.connect(self.db_path) as db:
+            await db.execute("PRAGMA foreign_keys = ON")
             await db.execute(
                 """
                 INSERT INTO accounts (
@@ -79,6 +82,14 @@ class DBManager:
             async with db.execute(
                 "SELECT * FROM accounts WHERE user_id = ?", (user_id,)
             ) as cursor:
+                rows = await cursor.fetchall()
+                return [dict(row) for row in rows]
+
+    async def get_all_accounts(self) -> List[dict]:
+        """Returns all accounts in the database."""
+        async with aiosqlite.connect(self.db_path) as db:
+            db.row_factory = aiosqlite.Row
+            async with db.execute("SELECT * FROM accounts") as cursor:
                 rows = await cursor.fetchall()
                 return [dict(row) for row in rows]
 

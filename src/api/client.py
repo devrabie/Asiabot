@@ -168,3 +168,19 @@ class AsiacellClient:
 
         response = await self._request("GET", url, headers=headers)
         return response.get("data")
+
+    async def refresh_token(self, refresh_token: str) -> TokenResponse:
+        url = f"{self.BASE_URL}/v1/refreshtoken?lang=ar"
+
+        # Headers might need adjustment, but usually Bearer + refresh token in body or header
+        # Standard ODP might use Authorization: Bearer <refresh_token> for refresh endpoint
+        # OR send it in body. Assuming body based on typical OAuth/Asiacell flows or previous knowledge.
+        # If the specific Asiacell API structure is known, use that.
+        # Based on typical usage in this project so far:
+        headers = {
+            "Authorization": f"Bearer {refresh_token}",
+        }
+
+        # Some implementations might require an empty body or specific fields
+        response = await self._request("GET", url, headers=headers)
+        return TokenResponse.model_validate(response.get("data", {}))

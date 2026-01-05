@@ -4,6 +4,8 @@ from telegram import Update
 from telegram.ext import ApplicationBuilder, PicklePersistence
 from src.config import settings
 from src.bot.handlers import get_conversation_handler, start
+from src.services.scheduler import SchedulerService
+from src.database.db_manager import DBManager
 from telegram.ext import CommandHandler
 from loguru import logger
 
@@ -24,6 +26,14 @@ def main():
 
     application.add_handler(CommandHandler("start", start))
     application.add_handler(get_conversation_handler())
+
+    # Initialize DB and start scheduler
+    db_manager = DBManager()
+    loop = asyncio.get_event_loop()
+    loop.run_until_complete(db_manager.init_db())
+
+    scheduler_service = SchedulerService(application)
+    scheduler_service.start()
 
     logger.info("Bot is running...")
     application.run_polling()

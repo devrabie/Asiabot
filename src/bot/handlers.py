@@ -104,7 +104,7 @@ async def otp_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             # Save to DB
             db_manager = DBManager()
-            await db_manager.init_db()
+            # db_manager.init_db() is now called in main.py
 
             user_id = update.message.from_user.id
             await db_manager.add_account(
