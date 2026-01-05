@@ -10,7 +10,7 @@ from telegram.ext import (
 )
 from loguru import logger
 from src.api.client import AsiacellClient
-from src.database.repository import AccountRepository
+from src.database.db_manager import DBManager
 
 # States
 PHONE, OTP = range(2)
@@ -103,9 +103,18 @@ async def otp_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 return ConversationHandler.END
 
             # Save to DB
-            repo = AccountRepository()
-            await repo.init_db()
-            await repo.save_account(phone_number, access_token, refresh_token, device_id, cookie)
+            db_manager = DBManager()
+            # db_manager.init_db() is now called in main.py
+
+            user_id = update.message.from_user.id
+            await db_manager.add_account(
+                user_id=user_id,
+                phone_number=phone_number,
+                device_id=device_id,
+                cookie=cookie,
+                access_token=access_token,
+                refresh_token=refresh_token
+            )
 
             await update.message.reply_text("Login Successful! Account Saved.")
 
