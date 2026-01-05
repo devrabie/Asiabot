@@ -134,10 +134,22 @@ class AsiacellClient:
     async def get_login_cookie(self) -> str:
         url = f"{self.BASE_URL}/v1/login-screen?lang=ar"
         response = await self._request("GET", url)
+        cookies = response.get("cookies", {})
+
+        # If we have parsed cookies, construct the header value without attributes
+        if cookies:
+            cookie_parts = []
+            for name, morsel in cookies.items():
+                cookie_parts.append(f"{name}={morsel.value}")
+            return "; ".join(cookie_parts)
+
+        # Fallback to header extraction if no cookies in jar (unlikely with aiohttp)
         headers = response.get("headers", {})
         for k, v in headers.items():
             if k.lower() == "set-cookie":
-                return v
+                # PHP: explode(';', $session_data[0])[0]
+                # Return only the name=value part
+                return v.split(';')[0]
         return ""
 
     async def send_login_code(self, device_id: str, cookie: str, phone_number: str) -> LoginResponse:
@@ -186,19 +198,16 @@ class AsiacellClient:
         return response.get("data")
 
     async def refresh_token(self, refresh_token: str) -> TokenResponse:
-        url = f"{self.BASE_URL}/v1/refreshtoken?lang=ar"
+        url = f"{self.BASE_URL}/v1/validate"
 
-        # Headers might need adjustment, but usually Bearer + refresh token in body or header
-        # Standard ODP might use Authorization: Bearer <refresh_token> for refresh endpoint
-        # OR send it in body. Assuming body based on typical OAuth/Asiacell flows or previous knowledge.
-        # If the specific Asiacell API structure is known, use that.
-        # Based on typical usage in this project so far:
-        headers = {
-            "Authorization": f"Bearer {refresh_token}",
+        # PHP implementation does NOT send Authorization header for this request
+        # It sends refreshToken in the body.
+
+        body = {
+            "refreshToken": f"Bearer {refresh_token}"
         }
 
-        # Some implementations might require an empty body or specific fields
-        response = await self._request("GET", url, headers=headers)
+        response = await self._request("POST", url, json=body)
         return TokenResponse.model_validate(response.get("data", {}))
 
     async def submit_recharge_other(self, voucher_code: str, target_msisdn: str, access_token: str) -> dict:
