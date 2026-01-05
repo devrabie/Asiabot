@@ -226,6 +226,23 @@ class AsiacellClient:
         response = await self._request("POST", url, headers=headers, json=body)
         return response.get("data", {})
 
+    async def recharge(self, voucher_code: str, access_token: str) -> dict:
+        """Self-recharge the account associated with the access token."""
+        url = f"{self.BASE_URL}/v1/top-up?lang=ar"
+
+        headers = {
+            "Authorization": f"Bearer {access_token}"
+        }
+
+        body = {
+            "voucher": voucher_code,
+            "msisdn": "",
+            "rechargeType": 1
+        }
+
+        response = await self._request("POST", url, headers=headers, json=body)
+        return response.get("data", {})
+
     async def extract_text_from_image_url(self, image_url: str) -> str:
         """Calls external OCR service to extract text from image URL."""
         url = "http://94.72.106.130:8003/api/v1/extract-text/"
