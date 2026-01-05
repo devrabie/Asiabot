@@ -70,7 +70,10 @@ class AsiacellClient:
 
     async def _get_session(self) -> aiohttp.ClientSession:
         if self.session is None or self.session.closed:
-            self.session = aiohttp.ClientSession(headers=self.DEFAULT_HEADERS)
+            self.session = aiohttp.ClientSession(
+                headers=self.DEFAULT_HEADERS,
+                cookie_jar=aiohttp.DummyCookieJar()
+            )
         return self.session
 
     async def close(self):
@@ -157,7 +160,6 @@ class AsiacellClient:
 
         headers = {
             "DeviceID": device_id,
-            "Cookie": cookie
         }
 
         body = {
@@ -173,7 +175,6 @@ class AsiacellClient:
 
         headers = {
             "DeviceID": device_id,
-            "Cookie": session_cookie
         }
 
         body = {
@@ -191,7 +192,6 @@ class AsiacellClient:
         headers = {
             "Authorization": f"Bearer {access_token}",
             "DeviceID": device_id,
-            "Cookie": cookie
         }
 
         response = await self._request("GET", url, headers=headers)
