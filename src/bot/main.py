@@ -14,6 +14,18 @@ logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
 )
 
+async def post_init(application):
+    logger.info("Running post_init...")
+
+    # Initialize DB
+    db_manager = DBManager()
+    await db_manager.init_db()
+
+    # Start Scheduler
+    scheduler_service = SchedulerService(application)
+    scheduler_service.start()
+    logger.info("Scheduler started via post_init.")
+
 def main():
     logger.info("Starting Asiabot...")
 
@@ -22,18 +34,10 @@ def main():
         logger.error("BOT_TOKEN not found in environment variables.")
         return
 
-    application = ApplicationBuilder().token(settings.BOT_TOKEN).build()
+    application = ApplicationBuilder().token(settings.BOT_TOKEN).post_init(post_init).build()
 
     application.add_handler(CommandHandler("start", start))
     application.add_handler(get_conversation_handler())
-
-    # Initialize DB and start scheduler
-    db_manager = DBManager()
-    loop = asyncio.get_event_loop()
-    loop.run_until_complete(db_manager.init_db())
-
-    scheduler_service = SchedulerService(application)
-    scheduler_service.start()
 
     logger.info("Bot is running...")
     application.run_polling()
