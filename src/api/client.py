@@ -210,11 +210,12 @@ class AsiacellClient:
         response = await self._request("POST", url, json=body)
         return TokenResponse.model_validate(response.get("data", {}))
 
-    async def submit_recharge_other(self, voucher_code: str, target_msisdn: str, access_token: str) -> dict:
+    async def submit_recharge_other(self, voucher_code: str, target_msisdn: str, access_token: str, device_id: str) -> dict:
         url = f"{self.BASE_URL}/v1/top-up?lang=ar"
 
         headers = {
-            "Authorization": f"Bearer {access_token}"
+            "Authorization": f"Bearer {access_token}",
+            "DeviceID": device_id
         }
 
         body = {
@@ -226,12 +227,13 @@ class AsiacellClient:
         response = await self._request("POST", url, headers=headers, json=body)
         return response.get("data", {})
 
-    async def recharge(self, voucher_code: str, access_token: str) -> dict:
+    async def recharge(self, voucher_code: str, access_token: str, device_id: str) -> dict:
         """Self-recharge the account associated with the access token."""
         url = f"{self.BASE_URL}/v1/top-up?lang=ar"
 
         headers = {
-            "Authorization": f"Bearer {access_token}"
+            "Authorization": f"Bearer {access_token}",
+            "DeviceID": device_id
         }
 
         body = {

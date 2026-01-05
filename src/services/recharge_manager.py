@@ -98,10 +98,12 @@ class RechargeManager:
                     # Check/Refresh sender token if needed (proactive or reactive? reactive via 403 handling below)
 
                     if sender_number == target_number:
-                        response = await client.recharge(voucher_code, sender["access_token"])
+                        response = await client.recharge(
+                            voucher_code, sender["access_token"], sender["device_id"]
+                        )
                     else:
                         response = await client.submit_recharge_other(
-                            voucher_code, target_number, sender["access_token"]
+                            voucher_code, target_number, sender["access_token"], sender["device_id"]
                         )
 
                     # Inspect response if 200 OK
@@ -161,10 +163,12 @@ class RechargeManager:
                             try:
                                 logger.info(f"Retrying recharge with new token for {sender_number}")
                                 if sender_number == target_number:
-                                    await client.recharge(voucher_code, new_token)
+                                    await client.recharge(
+                                        voucher_code, new_token, sender["device_id"]
+                                    )
                                 else:
                                     await client.submit_recharge_other(
-                                        voucher_code, target_number, new_token
+                                        voucher_code, target_number, new_token, sender["device_id"]
                                     )
                                 await asyncio.sleep(3)
                                 new_balance = await self._get_balance_safe(client, target_account)
