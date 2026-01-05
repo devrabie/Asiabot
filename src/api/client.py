@@ -225,3 +225,23 @@ class AsiacellClient:
 
         response = await self._request("POST", url, headers=headers, json=body)
         return response.get("data", {})
+
+    async def extract_text_from_image_url(self, image_url: str) -> str:
+        """Calls external OCR service to extract text from image URL."""
+        url = "http://94.72.106.130:8003/api/v1/extract-text/"
+        headers = {"Content-Type": "application/json"}
+
+        # Use a fresh session to avoid Asiacell headers/proxies
+        async with aiohttp.ClientSession() as session:
+            try:
+                async with session.post(url, json={"url": image_url}, headers=headers, timeout=30) as response:
+                    response.raise_for_status()
+                    data = await response.json()
+                    # Response format from PHP example: {'status': true/false, 'text': '...', 'message': '...'}
+                    if data.get("status") is False:
+                        logger.warning(f"OCR service returned error: {data.get('message')}")
+                        return ""
+                    return data.get("text", "")
+            except Exception as e:
+                logger.error(f"OCR request failed: {e}")
+                return ""

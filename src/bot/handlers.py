@@ -275,7 +275,25 @@ async def start_recharge(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def recharge_input_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handles the card number input."""
     user_id = get_effective_user_id(update.effective_user.id)
-    text = update.message.text or update.message.caption or ""
+    text = ""
+
+    if update.message.text:
+        text = update.message.text
+    elif update.message.photo:
+        await update.message.reply_text("⏳ جاري تحليل الصورة واستخراج الكود...")
+        try:
+            photo = update.message.photo[-1]
+            file = await context.bot.get_file(photo.file_id)
+            async with AsiacellClient() as client:
+                text = await client.extract_text_from_image_url(file.file_path)
+        except Exception as e:
+            logger.error(f"Failed to process photo: {e}")
+            await update.message.reply_text("❌ حدث خطأ أثناء معالجة الصورة.")
+            return RECHARGE_INPUT
+
+    # Fallback to caption if available and OCR didn't find anything (or it wasn't a photo)
+    if not text and update.message.caption:
+        text = update.message.caption
 
     # Extract code using robust logic
     code = extract_card_number(text)
