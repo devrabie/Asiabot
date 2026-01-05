@@ -38,7 +38,11 @@ class AsiacellClient:
         try:
             with open(filepath, "r") as f:
                 lines = f.read().splitlines()
-                return [line.strip() for line in lines if line.strip()]
+                # Filter out comments and empty lines
+                return [
+                    line.strip() for line in lines
+                    if line.strip() and not line.strip().startswith("#")
+                ]
         except FileNotFoundError:
             logger.warning(f"Proxy file not found at {filepath}. No proxies will be used.")
             return []
@@ -100,7 +104,19 @@ class AsiacellClient:
                     }
 
             except (aiohttp.ClientError, asyncio.TimeoutError) as e:
-                logger.warning(f"Request failed: {e}. Retrying...")
+                # Log generic error to avoid leaking proxy details if desired,
+                # or rely on log levels.
+                # To make it "untraceable" in logs as requested, we hide the detailed exception string
+                # if it contains the proxy IP.
+                err_str = str(e)
+                if proxy:
+                    # Simple masking if proxy string is present in error
+                    # Note: e might be complex, so this is a basic attempt
+                    safe_err = "Connection failed"
+                else:
+                    safe_err = err_str
+
+                logger.warning(f"Request failed: {safe_err}. Retrying...")
                 if attempt == retries:
                     logger.error("Max retries reached.")
                     raise e
