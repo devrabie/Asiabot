@@ -269,7 +269,7 @@ async def start_recharge(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.callback_query.message.reply_text(text, parse_mode="Markdown")
     else:
         await update.message.reply_text(text, parse_mode="Markdown")
-    return RECHARGE_CODE
+    return RECHARGE_INPUT
 
 async def recharge_input_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handles the card number input."""
@@ -280,7 +280,7 @@ async def recharge_input_handler(update: Update, context: ContextTypes.DEFAULT_T
     match = re.search(r'\b(\d{14,15})\b', text)
     if not match:
         await update.message.reply_text("❌ لم يتم العثور على كود صالح. يرجى إرسال كود يتكون من 14 أو 15 رقم.")
-        return RECHARGE_CODE
+        return RECHARGE_INPUT
 
     code = match.group(1)
     msg = await update.message.reply_text(f"🔄 جاري معالجة الكود: `{code}` ...", parse_mode="Markdown")
@@ -445,7 +445,7 @@ def get_handlers():
             CallbackQueryHandler(start_recharge, pattern="^start_recharge$")
         ],
         states={
-            RECHARGE_CODE: [MessageHandler(filters.TEXT & ~filters.COMMAND, recharge_input_handler)],
+            RECHARGE_INPUT: [MessageHandler(filters.TEXT & ~filters.COMMAND, recharge_input_handler)],
         },
         fallbacks=[CommandHandler("cancel", cancel)],
     )
