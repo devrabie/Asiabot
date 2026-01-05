@@ -200,3 +200,19 @@ class AsiacellClient:
         # Some implementations might require an empty body or specific fields
         response = await self._request("GET", url, headers=headers)
         return TokenResponse.model_validate(response.get("data", {}))
+
+    async def submit_recharge_other(self, voucher_code: str, target_msisdn: str, access_token: str) -> dict:
+        url = f"{self.BASE_URL}/v1/top-up?lang=ar"
+
+        headers = {
+            "Authorization": f"Bearer {access_token}"
+        }
+
+        body = {
+            "voucher": voucher_code,
+            "msisdn": target_msisdn,
+            "rechargeType": 1
+        }
+
+        response = await self._request("POST", url, headers=headers, json=body)
+        return response.get("data", {})

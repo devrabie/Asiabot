@@ -141,3 +141,20 @@ class DBManager:
             )
             await db.commit()
             return cursor.rowcount > 0
+
+    async def set_primary_receiver(self, user_id: int, phone_number: str):
+        """Set an account as the primary receiver for a user."""
+        async with aiosqlite.connect(self.db_path) as db:
+            # First, set all accounts for this user to False
+            await db.execute(
+                "UPDATE accounts SET is_primary_receiver = 0 WHERE user_id = ?",
+                (user_id,)
+            )
+
+            # Then set the specified account to True
+            await db.execute(
+                "UPDATE accounts SET is_primary_receiver = 1 WHERE user_id = ? AND phone_number = ?",
+                (user_id, phone_number)
+            )
+            await db.commit()
+            logger.info(f"Set account {phone_number} as primary receiver for user {user_id}.")
