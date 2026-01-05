@@ -13,6 +13,7 @@ from loguru import logger
 from src.api.client import AsiacellClient
 from src.database.db_manager import DBManager
 from src.services.recharge_manager import RechargeManager
+from src.utils.card_parser import extract_card_number
 import aiohttp
 
 # States for Conversations
@@ -274,15 +275,15 @@ async def start_recharge(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def recharge_input_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handles the card number input."""
     user_id = get_effective_user_id(update.effective_user.id)
-    text = update.message.text
+    text = update.message.text or update.message.caption or ""
 
-    # Extract code using regex
-    match = re.search(r'\b(\d{14,15})\b', text)
-    if not match:
+    # Extract code using robust logic
+    code = extract_card_number(text)
+
+    if not code:
         await update.message.reply_text("❌ لم يتم العثور على كود صالح. يرجى إرسال كود يتكون من 14 أو 15 رقم.")
         return RECHARGE_INPUT
 
-    code = match.group(1)
     msg = await update.message.reply_text(f"🔄 جاري معالجة الكود: `{code}` ...", parse_mode="Markdown")
 
     try:
@@ -445,7 +446,7 @@ def get_handlers():
             CallbackQueryHandler(start_recharge, pattern="^start_recharge$")
         ],
         states={
-            RECHARGE_INPUT: [MessageHandler(filters.TEXT & ~filters.COMMAND, recharge_input_handler)],
+            RECHARGE_INPUT: [MessageHandler((filters.TEXT & ~filters.COMMAND) | filters.PHOTO, recharge_input_handler)],
         },
         fallbacks=[CommandHandler("cancel", cancel)],
     )
