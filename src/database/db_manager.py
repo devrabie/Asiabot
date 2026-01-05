@@ -120,3 +120,24 @@ class DBManager:
             )
             await db.commit()
             logger.info(f"Balance updated for {phone_number}: {new_balance}.")
+
+    async def get_account(self, phone_number: str, user_id: int) -> Optional[dict]:
+        """Fetch a specific account for a user."""
+        async with aiosqlite.connect(self.db_path) as db:
+            db.row_factory = aiosqlite.Row
+            async with db.execute(
+                "SELECT * FROM accounts WHERE phone_number = ? AND user_id = ?",
+                (phone_number, user_id)
+            ) as cursor:
+                row = await cursor.fetchone()
+                return dict(row) if row else None
+
+    async def delete_account(self, phone_number: str, user_id: int) -> bool:
+        """Delete an account if it belongs to the user."""
+        async with aiosqlite.connect(self.db_path) as db:
+            cursor = await db.execute(
+                "DELETE FROM accounts WHERE phone_number = ? AND user_id = ?",
+                (phone_number, user_id)
+            )
+            await db.commit()
+            return cursor.rowcount > 0

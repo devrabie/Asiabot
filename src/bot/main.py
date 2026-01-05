@@ -3,7 +3,7 @@ import logging
 from telegram import Update
 from telegram.ext import ApplicationBuilder, PicklePersistence
 from src.config import settings
-from src.bot.handlers import get_conversation_handler, start
+from src.bot.handlers import get_handlers
 from src.services.scheduler import SchedulerService
 from src.database.db_manager import DBManager
 from telegram.ext import CommandHandler
@@ -36,8 +36,9 @@ def main():
 
     application = ApplicationBuilder().token(settings.BOT_TOKEN).post_init(post_init).build()
 
-    application.add_handler(CommandHandler("start", start))
-    application.add_handler(get_conversation_handler())
+    # Register all handlers
+    for handler in get_handlers():
+        application.add_handler(handler)
 
     logger.info("Bot is running...")
     application.run_polling()
