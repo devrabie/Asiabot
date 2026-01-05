@@ -25,6 +25,14 @@ class DBManager:
         async with aiosqlite.connect(self.db_path) as db:
             await db.execute("PRAGMA foreign_keys = ON")
             await db.executescript(schema)
+
+            # Migration: Check if is_primary_receiver column exists
+            try:
+                await db.execute("SELECT is_primary_receiver FROM accounts LIMIT 1")
+            except aiosqlite.OperationalError:
+                logger.info("Migrating database: Adding is_primary_receiver column to accounts table.")
+                await db.execute("ALTER TABLE accounts ADD COLUMN is_primary_receiver BOOLEAN DEFAULT 0")
+
             await db.commit()
             logger.info("Database initialized successfully.")
 
