@@ -106,16 +106,30 @@ class RechargeManager:
                             voucher_code, target_number, sender["access_token"], sender["device_id"]
                         )
 
-                    # Inspect response if 200 OK
-                    # If success is True or message indicates success
-                    # Note: ODP sometimes returns 200 with error message in body
+                    # Inspect response
+                    # Try to capture API message
+                    api_message = ""
+                    if isinstance(response, dict):
+                        api_message = response.get("message", "")
+
                     msg_str = str(response).lower()
+
+                    # Check for success
+                    # If success is True or message indicates success
                     if isinstance(response, dict) and (response.get("success") is True or "success" in msg_str):
                         pass # Proceed to check balance
-                    elif "invalid" in msg_str or "used" in msg_str or "not found" in msg_str:
-                        return f"❌ خطأ: الكرت غير صالح أو مستخدم مسبقاً."
-                    elif "block" in msg_str or "limit" in msg_str:
-                        logger.warning(f"Sender {sender_number} blocked/limited: {msg_str}")
+                    else:
+                        # Handle specific business errors
+                        if "invalid" in msg_str or "used" in msg_str or "not found" in msg_str:
+                            error_text = api_message or "الكرت غير صالح أو مستخدم مسبقاً."
+                            return f"❌ خطأ: {error_text}"
+                        elif "block" in msg_str or "limit" in msg_str:
+                            logger.warning(f"Sender {sender_number} blocked/limited: {msg_str}")
+                            continue
+
+                        # Fallback for other errors (even with 200 OK)
+                        error_text = api_message or "فشل غير معروف."
+                        logger.warning(f"Recharge response indicated failure: {response}")
                         continue
 
                     # Wait for balance update
@@ -140,11 +154,13 @@ class RechargeManager:
                             f"🔢 الكرت: `{voucher_code}`"
                         )
                     else:
-                        # Maybe it takes longer? Or response was actually failure masked?
-                        # PHP code returns "Success" but "failed to confirm balance"
+                        # Success response but balance didn't change
+                        # Include API message if available to explain why
+                        msg_part = f"\nرسالة الشركة: {api_message}" if api_message else ""
                         return (
                             f"✅ تم إرسال طلب الشحن، ولكن لم يتم رصد تغير في الرصيد.\n"
-                            f"الرصيد الحالي: {initial_balance:,.0f} IQD\n"
+                            f"الرصيد الحالي: {initial_balance:,.0f} IQD"
+                            f"{msg_part}\n"
                             f"يرجى التحقق يدوياً."
                         )
 
