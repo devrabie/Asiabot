@@ -20,16 +20,6 @@ import aiohttp
 PHONE, OTP = range(2)
 RECHARGE_INPUT = 2
 
-# Constants for User ID Override (Testing)
-ORIGINAL_USER_ID = 6198033039
-TARGET_USER_ID = 6614293496
-
-def get_effective_user_id(user_id: int) -> int:
-    """Returns the effective user ID, swapping if it matches the original user ID."""
-    if user_id == ORIGINAL_USER_ID:
-        return TARGET_USER_ID
-    return user_id
-
 # --- Handlers ---
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -73,7 +63,7 @@ async def my_accounts_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
     """Lists user accounts."""
     query = update.callback_query
     await query.answer()
-    user_id = get_effective_user_id(query.from_user.id)
+    user_id = query.from_user.id
 
     db = DBManager()
     accounts = await db.get_user_accounts(user_id)
@@ -99,7 +89,7 @@ async def account_details_handler(update: Update, context: ContextTypes.DEFAULT_
     await query.edit_message_text("⏳ جاري الاتصال بخوادم آسياسيل لجلب أحدث البيانات...")
 
     phone = query.data.split("_")[1]
-    user_id = get_effective_user_id(query.from_user.id)
+    user_id = query.from_user.id
 
     db = DBManager()
     account = await db.get_account(phone, user_id)
@@ -229,7 +219,7 @@ async def delete_action_handler(update: Update, context: ContextTypes.DEFAULT_TY
     query = update.callback_query
     await query.answer()
     phone = query.data.split("_")[1]
-    user_id = get_effective_user_id(query.from_user.id)
+    user_id = query.from_user.id
 
     db = DBManager()
     success = await db.delete_account(phone, user_id)
@@ -247,7 +237,7 @@ async def set_primary_receiver_handler(update: Update, context: ContextTypes.DEF
     await query.answer()
 
     phone = query.data.split("_")[1]
-    user_id = get_effective_user_id(query.from_user.id)
+    user_id = query.from_user.id
 
     db = DBManager()
     await db.set_primary_receiver(user_id, phone)
@@ -260,7 +250,7 @@ async def set_primary_receiver_handler(update: Update, context: ContextTypes.DEF
 
 async def start_recharge(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Starts the recharge conversation."""
-    user_id = get_effective_user_id(update.effective_user.id)
+    user_id = update.effective_user.id
     db = DBManager()
     accounts = await db.get_user_accounts(user_id)
 
@@ -294,7 +284,7 @@ async def start_recharge(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def recharge_input_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handles the card number input."""
-    user_id = get_effective_user_id(update.effective_user.id)
+    user_id = update.effective_user.id
     text = ""
 
     if update.message.text:
@@ -424,7 +414,7 @@ async def otp_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             db_manager = DBManager()
             # db_manager.init_db() is called in main.py
 
-            user_id = get_effective_user_id(update.message.from_user.id)
+            user_id = update.message.from_user.id
             await db_manager.add_account(
                 user_id=user_id,
                 phone_number=data["phone_number"],
