@@ -456,7 +456,8 @@ async def cancel_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     if query:
         await query.answer()
-        await query.edit_message_text("تم الإلغاء.")
+        # Return to main menu instead of just saying cancelled
+        await start(update, context)
     return ConversationHandler.END
 
 # --- Export Handlers ---
