@@ -281,11 +281,15 @@ async def start_recharge(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "قم بإرسال رقم الكارت (14 أو 15 رقم).\n"
         "يمكنك إرسال رقم الكارت كتابةً أو صورة الكارت."
     )
+
+    keyboard = [[InlineKeyboardButton("🔙 إلغاء", callback_data="cancel_conv")]]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
     if update.callback_query:
         await update.callback_query.answer()
-        await update.callback_query.message.reply_text(text, parse_mode="Markdown")
+        await update.callback_query.edit_message_text(text, parse_mode="Markdown", reply_markup=reply_markup)
     else:
-        await update.message.reply_text(text, parse_mode="Markdown")
+        await update.message.reply_text(text, parse_mode="Markdown", reply_markup=reply_markup)
     return RECHARGE_INPUT
 
 async def recharge_input_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -335,11 +339,15 @@ async def recharge_input_handler(update: Update, context: ContextTypes.DEFAULT_T
 async def add_account_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Starts the add account flow from callback."""
     query = update.callback_query
+    text = "الرجاء إرسال رقم آسياسيل الخاص بك (077xxxxxxxx):"
+    keyboard = [[InlineKeyboardButton("🔙 إلغاء", callback_data="cancel_conv")]]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
     if query:
         await query.answer()
-        await query.message.reply_text("الرجاء إرسال رقم آسياسيل الخاص بك (077xxxxxxxx):")
+        await query.edit_message_text(text, reply_markup=reply_markup)
     else:
-        await update.message.reply_text("الرجاء إرسال رقم آسياسيل الخاص بك (077xxxxxxxx):")
+        await update.message.reply_text(text, reply_markup=reply_markup)
     return PHONE
 
 async def phone_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -443,6 +451,14 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("تم الإلغاء.", reply_markup=ReplyKeyboardRemove())
     return ConversationHandler.END
 
+async def cancel_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Cancels the conversation via callback button."""
+    query = update.callback_query
+    if query:
+        await query.answer()
+        await query.edit_message_text("تم الإلغاء.")
+    return ConversationHandler.END
+
 # --- Export Handlers ---
 
 def get_handlers():
@@ -470,7 +486,10 @@ def get_handlers():
             PHONE: [MessageHandler(filters.TEXT & ~filters.COMMAND, phone_handler)],
             OTP: [MessageHandler(filters.TEXT & ~filters.COMMAND, otp_handler)],
         },
-        fallbacks=[CommandHandler("cancel", cancel)],
+        fallbacks=[
+            CommandHandler("cancel", cancel),
+            CallbackQueryHandler(cancel_callback, pattern="^cancel_conv$")
+        ],
     )
 
     # Recharge Conversation
@@ -482,7 +501,10 @@ def get_handlers():
         states={
             RECHARGE_INPUT: [MessageHandler((filters.TEXT & ~filters.COMMAND) | filters.PHOTO, recharge_input_handler)],
         },
-        fallbacks=[CommandHandler("cancel", cancel)],
+        fallbacks=[
+            CommandHandler("cancel", cancel),
+            CallbackQueryHandler(cancel_callback, pattern="^cancel_conv$")
+        ],
     )
 
     return [add_account_conv, recharge_conv, CommandHandler("start", start)] + callback_handlers
