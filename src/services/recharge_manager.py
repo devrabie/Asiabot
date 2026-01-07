@@ -32,7 +32,7 @@ class RechargeManager:
     async def _refresh_and_update(self, client: AsiacellClient, account: dict) -> Optional[str]:
         """Refreshes token and updates DB. Returns new access_token or None."""
         try:
-            token_resp = await client.refresh_token(account["refresh_token"])
+            token_resp = await client.refresh_token(account["refresh_token"], account["device_id"])
             if token_resp.access_token:
                 await self.db.update_tokens(
                     account["phone_number"],

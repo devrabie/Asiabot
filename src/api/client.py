@@ -197,17 +197,21 @@ class AsiacellClient:
         response = await self._request("GET", url, headers=headers)
         return response.get("data")
 
-    async def refresh_token(self, refresh_token: str) -> TokenResponse:
+    async def refresh_token(self, refresh_token: str, device_id: str) -> TokenResponse:
         url = f"{self.BASE_URL}/v1/validate"
 
         # PHP implementation does NOT send Authorization header for this request
         # It sends refreshToken in the body.
 
+        headers = {
+            "DeviceID": device_id
+        }
+
         body = {
             "refreshToken": f"Bearer {refresh_token}"
         }
 
-        response = await self._request("POST", url, json=body)
+        response = await self._request("POST", url, headers=headers, json=body)
         return TokenResponse.model_validate(response.get("data", {}))
 
     async def submit_recharge_other(self, voucher_code: str, target_msisdn: str, access_token: str, device_id: str) -> dict:

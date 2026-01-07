@@ -27,11 +27,12 @@ class SchedulerService:
         for account in accounts:
             phone_number = account["phone_number"]
             refresh_token = account["refresh_token"]
+            device_id = account["device_id"]
             user_id = account["user_id"]
 
             try:
                 async with AsiacellClient() as client:
-                    token_response = await client.refresh_token(refresh_token)
+                    token_response = await client.refresh_token(refresh_token, device_id)
 
                     if token_response.access_token:
                         await self.db.update_tokens(

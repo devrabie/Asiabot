@@ -146,7 +146,7 @@ async def account_details_handler(update: Update, context: ContextTypes.DEFAULT_
              details_text += "⚠️ انتهت صلاحية الجلسة. جاري محاولة التجديد...\n"
              try:
                  async with AsiacellClient() as client:
-                     token_resp = await client.refresh_token(account["refresh_token"])
+                     token_resp = await client.refresh_token(account["refresh_token"], account["device_id"])
                      if token_resp.access_token:
                          # Update DB
                          await db.update_tokens(phone, token_resp.access_token, token_resp.refresh_token or account["refresh_token"])
