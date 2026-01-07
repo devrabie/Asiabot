@@ -14,13 +14,13 @@ class SchedulerService:
 
     def start(self):
         """Starts the scheduler with defined jobs."""
-        self.scheduler.add_job(self.refresh_all_tokens, "interval", hours=11)
-        self.scheduler.add_job(self.check_balances, "interval", minutes=30)
+        self.scheduler.add_job(self.refresh_all_tokens, "interval", hours=12)
+        # self.scheduler.add_job(self.check_balances, "interval", minutes=30)
         self.scheduler.start()
         logger.info("Scheduler started.")
 
     async def refresh_all_tokens(self):
-        """Refresh tokens for all accounts every 11 hours."""
+        """Refresh tokens for all accounts every 12 hours."""
         logger.info("Starting token refresh job...")
         accounts = await self.db.get_all_accounts()
 
