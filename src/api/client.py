@@ -200,16 +200,33 @@ class AsiacellClient:
     async def refresh_token(self, refresh_token: str, device_id: str) -> TokenResponse:
         url = f"{self.BASE_URL}/v1/validate"
 
-        # PHP implementation does NOT send Authorization header for this request
-        # It sends refreshToken in the body.
-
+        # PHP implementation headers
         headers = {
-            "DeviceID": device_id
+            "User-Agent": "okhttp/5.0.0-alpha.2",
+            "Connection": "Keep-Alive",
+            "Accept-Encoding": "gzip",
+            "Content-Type": "application/json",
+            "X-ODP-API-KEY": self.API_KEY,
+            "DeviceID": device_id,
+            "X-OS-Version": "11",
+            "X-Device-Type": "[Android][realme][RMX2189 11] [R]",
+            "X-ODP-APP-VERSION": "4.2.4",
+            "X-FROM-APP": "odp",
+            "X-ODP-CHANNEL": "mobile",
+            "Cache-Control": "no-cache",
         }
 
         body = {
             "refreshToken": f"Bearer {refresh_token}"
         }
+
+        # We pass headers explicitly to _request. _request uses session.request which merges headers.
+        # To strictly overwrite session headers (like X-SCREEN-TYPE if it causes issues, or Cache-Control),
+        # passing them here works for keys present in both.
+        # However, keys present in session but NOT here will remain.
+        # The PHP code does NOT have X-SCREEN-TYPE. The Python session DOES.
+        # To be safe, we can try to suppress it if needed, but usually extra headers are ignored.
+        # Let's rely on the explicit headers matching PHP where they overlap.
 
         response = await self._request("POST", url, headers=headers, json=body)
         return TokenResponse.model_validate(response.get("data", {}))
