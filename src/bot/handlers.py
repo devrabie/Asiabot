@@ -149,9 +149,34 @@ async def account_details_handler(update: Update, context: ContextTypes.DEFAULT_
                      token_resp = await client.refresh_token(account["refresh_token"], account["device_id"])
                      if token_resp.access_token:
                          # Update DB
-                         await db.update_tokens(phone, token_resp.access_token, token_resp.refresh_token or account["refresh_token"])
-                         details_text += "✅ تم تجديد التوكن بنجاح. يرجى التحديث مجدداً.\n"
-                         # Optionally retry fetching balance here, but let's keep it simple for now
+                         new_refresh = token_resp.refresh_token or account["refresh_token"]
+                         await db.update_tokens(phone, token_resp.access_token, new_refresh)
+                         details_text += "✅ تم تجديد الجلسة بنجاح.\n"
+
+                         # Retry fetching balance immediately
+                         try:
+                             balance_data = await client.get_balance(
+                                 token_resp.access_token,
+                                 account["device_id"],
+                                 account["cookie"]
+                             )
+                             info = balance_data.get("watch", {}).get("information", {})
+                             raw_balance = info.get("mainBalance")
+
+                             if raw_balance:
+                                 fresh_balance = float(str(raw_balance).replace(" IQD", "").replace(",", ""))
+                                 account_info['name'] = info.get("fullname", "N/A")
+                                 account_info['expiry'] = info.get("expiryDate", "N/A")
+
+                                 await db.update_balance(phone, fresh_balance)
+                                 # Clear the warning message since we succeeded
+                                 details_text = f"📱 **تفاصيل حساب آسياسيل:** `{phone}`\n"
+                             else:
+                                 details_text += "⚠️ تم التجديد ولكن فشل جلب الرصيد (بيانات غير متوقعة).\n"
+                         except Exception as retry_err:
+                             logger.warning(f"Retry balance fetch failed: {retry_err}")
+                             details_text += "⚠️ تم التجديد ولكن فشل جلب الرصيد في المحاولة الثانية.\n"
+
                      else:
                          details_text += "❌ فشل تجديد التوكن. يرجى إعادة تسجيل الدخول.\n"
              except Exception as refresh_err:
