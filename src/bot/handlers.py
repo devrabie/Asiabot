@@ -504,8 +504,10 @@ def get_handlers():
         },
         fallbacks=[
             CommandHandler("cancel", cancel),
-            CallbackQueryHandler(cancel_callback, pattern="^cancel_conv$")
+            CallbackQueryHandler(cancel_callback, pattern="^cancel_conv$"),
+            CommandHandler("start", start), # Reset if user sends /start
         ],
+        allow_reentry=True,
     )
 
     # Recharge Conversation
@@ -519,8 +521,10 @@ def get_handlers():
         },
         fallbacks=[
             CommandHandler("cancel", cancel),
-            CallbackQueryHandler(cancel_callback, pattern="^cancel_conv$")
+            CallbackQueryHandler(cancel_callback, pattern="^cancel_conv$"),
+            CommandHandler("start", start), # Reset if user sends /start
         ],
+        allow_reentry=True,
     )
 
     return [add_account_conv, recharge_conv, CommandHandler("start", start)] + callback_handlers
