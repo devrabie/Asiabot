@@ -14,7 +14,7 @@ from src.api.client import AsiacellClient
 from src.database.db_manager import DBManager
 from src.services.recharge_manager import RechargeManager
 from src.utils.card_parser import extract_card_number
-from src.bot.admin_handlers import admin_dashboard
+from src.bot.admin_handlers import admin_dashboard, get_admin_handlers
 import aiohttp
 
 # States for Conversations
@@ -25,10 +25,16 @@ RECHARGE_INPUT = 2
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Sends the main menu."""
+    user = update.effective_user
+    db = DBManager()
+    await db.create_user_if_not_exists(user.id)
+    await db.update_user_profile(user.id, user.username, user.first_name)
+
     keyboard = [
         [InlineKeyboardButton("📱 حساباتي", callback_data="my_accounts")],
         [InlineKeyboardButton("➕ إضافة حساب جديد", callback_data="add_account_start")],
         [InlineKeyboardButton("💳 شحن رصيد", callback_data="start_recharge")],
+        [InlineKeyboardButton("💎 الخطط", callback_data="show_plans")],
         [InlineKeyboardButton("ℹ️ حول البوت", callback_data="about")],
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
@@ -350,11 +356,47 @@ async def recharge_input_handler(update: Update, context: ContextTypes.DEFAULT_T
 
     return ConversationHandler.END
 
+async def show_plans_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Shows available subscription plans."""
+    query = update.callback_query
+    await query.answer()
+
+    db = DBManager()
+    plans = await db.get_plans()
+    user_sub = await db.get_user_subscription(query.from_user.id)
+
+    text = "💎 **الخطط المتاحة**\n\n"
+    text += f"خطة اشتراكك الحالية: **{user_sub['name']}**\n"
+    text += f"الحد الأقصى للحسابات: {user_sub['max_accounts']}\n\n"
+
+    for plan in plans:
+        text += f"🔹 **{plan['name']}**\n"
+        text += f"   💰 السعر: {plan['price']} IQD\n"
+        text += f"   🔢 عدد الحسابات: {plan['max_accounts']}\n"
+        if plan['description']:
+            text += f"   ℹ️ {plan['description']}\n"
+        text += "\n"
+
+    text += "للاشتراك يرجى التواصل مع الدعم."
+    keyboard = [[InlineKeyboardButton("🔙 رجوع", callback_data="main_menu")]]
+    await query.edit_message_text(text=text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
+
 # --- Add Account Conversation ---
 
 async def add_account_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Starts the add account flow from callback."""
     query = update.callback_query
+    user_id = update.effective_user.id
+
+    db = DBManager()
+
+    # Check limit
+    sub = await db.get_user_subscription(user_id)
+    accounts = await db.get_user_accounts(user_id)
+    if len(accounts) >= sub['max_accounts']:
+        await query.answer("❌ لقد تجاوزت الحد الأقصى للحسابات المسموح به في خطتك.", show_alert=True)
+        return ConversationHandler.END
+
     text = "الرجاء إرسال رقم آسياسيل الخاص بك (077xxxxxxxx):"
     keyboard = [[InlineKeyboardButton("🔙 إلغاء", callback_data="cancel_conv")]]
     reply_markup = InlineKeyboardMarkup(keyboard)
@@ -528,9 +570,15 @@ def get_handlers():
         allow_reentry=True,
     )
 
+    # Add show_plans callback
+    callback_handlers.append(CallbackQueryHandler(show_plans_handler, pattern="^show_plans$"))
+
+    # Get Admin Conversation Handlers & Callbacks
+    admin_handlers = get_admin_handlers()
+
     return [
         add_account_conv,
         recharge_conv,
         CommandHandler("start", start),
         CommandHandler("admin", admin_dashboard)
-    ] + callback_handlers
+    ] + admin_handlers + callback_handlers

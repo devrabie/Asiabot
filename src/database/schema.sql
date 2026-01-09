@@ -1,7 +1,21 @@
 CREATE TABLE IF NOT EXISTS users (
     telegram_id INTEGER PRIMARY KEY,
     is_admin BOOLEAN DEFAULT 0,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    username TEXT,
+    first_name TEXT,
+    plan_id INTEGER,
+    plan_expiry TIMESTAMP,
+    FOREIGN KEY(plan_id) REFERENCES plans(id)
+);
+
+CREATE TABLE IF NOT EXISTS plans (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    price REAL DEFAULT 0,
+    max_accounts INTEGER DEFAULT 1,
+    description TEXT,
+    duration_days INTEGER DEFAULT 30
 );
 
 CREATE TABLE IF NOT EXISTS accounts (
