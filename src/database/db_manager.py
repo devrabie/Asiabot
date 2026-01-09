@@ -166,3 +166,22 @@ class DBManager:
             )
             await db.commit()
             logger.info(f"Set account {phone_number} as primary receiver for user {user_id}.")
+
+    async def get_all_users_with_accounts(self) -> List[dict]:
+        """Fetch all users and their associated accounts for admin display."""
+        async with aiosqlite.connect(self.db_path) as db:
+            db.row_factory = aiosqlite.Row
+            # Fetch users
+            async with db.execute("SELECT * FROM users") as cursor:
+                users = await cursor.fetchall()
+
+            result = []
+            for user in users:
+                user_dict = dict(user)
+                # Fetch accounts for this user
+                async with db.execute("SELECT * FROM accounts WHERE user_id = ?", (user['telegram_id'],)) as acc_cursor:
+                    accounts = await acc_cursor.fetchall()
+                    user_dict['accounts'] = [dict(acc) for acc in accounts]
+                result.append(user_dict)
+
+            return result

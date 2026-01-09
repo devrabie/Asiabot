@@ -14,6 +14,7 @@ from src.api.client import AsiacellClient
 from src.database.db_manager import DBManager
 from src.services.recharge_manager import RechargeManager
 from src.utils.card_parser import extract_card_number
+from src.bot.admin_handlers import admin_dashboard
 import aiohttp
 
 # States for Conversations
@@ -527,4 +528,9 @@ def get_handlers():
         allow_reentry=True,
     )
 
-    return [add_account_conv, recharge_conv, CommandHandler("start", start)] + callback_handlers
+    return [
+        add_account_conv,
+        recharge_conv,
+        CommandHandler("start", start),
+        CommandHandler("admin", admin_dashboard)
+    ] + callback_handlers
