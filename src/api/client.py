@@ -70,7 +70,10 @@ class AsiacellClient:
 
     async def _get_session(self) -> aiohttp.ClientSession:
         if self.session is None or self.session.closed:
-            self.session = aiohttp.ClientSession(headers=self.DEFAULT_HEADERS)
+            self.session = aiohttp.ClientSession(
+                headers=self.DEFAULT_HEADERS,
+                cookie_jar=aiohttp.DummyCookieJar()
+            )
         return self.session
 
     async def close(self):
@@ -134,10 +137,22 @@ class AsiacellClient:
     async def get_login_cookie(self) -> str:
         url = f"{self.BASE_URL}/v1/login-screen?lang=ar"
         response = await self._request("GET", url)
+        cookies = response.get("cookies", {})
+
+        # If we have parsed cookies, construct the header value without attributes
+        if cookies:
+            cookie_parts = []
+            for name, morsel in cookies.items():
+                cookie_parts.append(f"{name}={morsel.value}")
+            return "; ".join(cookie_parts)
+
+        # Fallback to header extraction if no cookies in jar (unlikely with aiohttp)
         headers = response.get("headers", {})
         for k, v in headers.items():
             if k.lower() == "set-cookie":
-                return v
+                # PHP: explode(';', $session_data[0])[0]
+                # Return only the name=value part
+                return v.split(';')[0]
         return ""
 
     async def send_login_code(self, device_id: str, cookie: str, phone_number: str) -> LoginResponse:
@@ -145,7 +160,6 @@ class AsiacellClient:
 
         headers = {
             "DeviceID": device_id,
-            "Cookie": cookie
         }
 
         body = {
@@ -161,7 +175,6 @@ class AsiacellClient:
 
         headers = {
             "DeviceID": device_id,
-            "Cookie": session_cookie
         }
 
         body = {
@@ -179,33 +192,30 @@ class AsiacellClient:
         headers = {
             "Authorization": f"Bearer {access_token}",
             "DeviceID": device_id,
-            "Cookie": cookie
         }
 
         response = await self._request("GET", url, headers=headers)
         return response.get("data")
 
     async def refresh_token(self, refresh_token: str) -> TokenResponse:
-        url = f"{self.BASE_URL}/v1/refreshtoken?lang=ar"
+        url = f"{self.BASE_URL}/v1/validate"
 
-        # Headers might need adjustment, but usually Bearer + refresh token in body or header
-        # Standard ODP might use Authorization: Bearer <refresh_token> for refresh endpoint
-        # OR send it in body. Assuming body based on typical OAuth/Asiacell flows or previous knowledge.
-        # If the specific Asiacell API structure is known, use that.
-        # Based on typical usage in this project so far:
-        headers = {
-            "Authorization": f"Bearer {refresh_token}",
+        # PHP implementation does NOT send Authorization header for this request
+        # It sends refreshToken in the body.
+
+        body = {
+            "refreshToken": f"Bearer {refresh_token}"
         }
 
-        # Some implementations might require an empty body or specific fields
-        response = await self._request("GET", url, headers=headers)
+        response = await self._request("POST", url, json=body)
         return TokenResponse.model_validate(response.get("data", {}))
 
-    async def submit_recharge_other(self, voucher_code: str, target_msisdn: str, access_token: str) -> dict:
+    async def submit_recharge_other(self, voucher_code: str, target_msisdn: str, access_token: str, device_id: str) -> dict:
         url = f"{self.BASE_URL}/v1/top-up?lang=ar"
 
         headers = {
-            "Authorization": f"Bearer {access_token}"
+            "Authorization": f"Bearer {access_token}",
+            "DeviceID": device_id
         }
 
         body = {
@@ -216,3 +226,41 @@ class AsiacellClient:
 
         response = await self._request("POST", url, headers=headers, json=body)
         return response.get("data", {})
+
+    async def recharge(self, voucher_code: str, access_token: str, device_id: str) -> dict:
+        """Self-recharge the account associated with the access token."""
+        url = f"{self.BASE_URL}/v1/top-up?lang=ar"
+
+        headers = {
+            "Authorization": f"Bearer {access_token}",
+            "DeviceID": device_id
+        }
+
+        body = {
+            "voucher": voucher_code,
+            "msisdn": "",
+            "rechargeType": 1
+        }
+
+        response = await self._request("POST", url, headers=headers, json=body)
+        return response.get("data", {})
+
+    async def extract_text_from_image_url(self, image_url: str) -> str:
+        """Calls external OCR service to extract text from image URL."""
+        url = "http://94.72.106.130:8003/api/v1/extract-text/"
+        headers = {"Content-Type": "application/json"}
+
+        # Use a fresh session to avoid Asiacell headers/proxies
+        async with aiohttp.ClientSession() as session:
+            try:
+                async with session.post(url, json={"url": image_url}, headers=headers, timeout=30) as response:
+                    response.raise_for_status()
+                    data = await response.json()
+                    # Response format from PHP example: {'status': true/false, 'text': '...', 'message': '...'}
+                    if data.get("status") is False:
+                        logger.warning(f"OCR service returned error: {data.get('message')}")
+                        return ""
+                    return data.get("text", "")
+            except Exception as e:
+                logger.error(f"OCR request failed: {e}")
+                return ""
