@@ -33,6 +33,27 @@ class DBManager:
                 logger.info("Migrating database: Adding is_primary_receiver column to accounts table.")
                 await db.execute("ALTER TABLE accounts ADD COLUMN is_primary_receiver BOOLEAN DEFAULT 0")
 
+            # Migration: Check if users table has username column
+            try:
+                await db.execute("SELECT username FROM users LIMIT 1")
+            except aiosqlite.OperationalError:
+                logger.info("Migrating database: Adding new columns to users table.")
+                await db.execute("ALTER TABLE users ADD COLUMN username TEXT")
+                await db.execute("ALTER TABLE users ADD COLUMN first_name TEXT")
+                await db.execute("ALTER TABLE users ADD COLUMN plan_id INTEGER REFERENCES plans(id)")
+                await db.execute("ALTER TABLE users ADD COLUMN plan_expiry TIMESTAMP")
+
+            # Check if plans table exists (handled by executescript but let's be safe regarding initial setup)
+            # No specific action needed if executescript runs, but adding default plan if table is empty is good
+            try:
+                async with db.execute("SELECT count(*) FROM plans") as cursor:
+                    count = await cursor.fetchone()
+                    if count[0] == 0:
+                        logger.info("Seeding default plan.")
+                        await db.execute("INSERT INTO plans (name, price, max_accounts, description) VALUES ('Free', 0, 1, 'Free plan')")
+            except Exception as e:
+                logger.error(f"Error seeding plans: {e}")
+
             await db.commit()
             logger.info("Database initialized successfully.")
 
@@ -45,6 +66,71 @@ class DBManager:
                 (telegram_id,)
             )
             await db.commit()
+
+    async def update_user_profile(self, user_id: int, username: str, first_name: str):
+        """Update user profile info."""
+        async with aiosqlite.connect(self.db_path) as db:
+            await db.execute(
+                "UPDATE users SET username = ?, first_name = ? WHERE telegram_id = ?",
+                (username, first_name, user_id)
+            )
+            await db.commit()
+
+    async def add_plan(self, name: str, price: float, max_accounts: int, description: str, duration_days: int):
+        """Add a new subscription plan."""
+        async with aiosqlite.connect(self.db_path) as db:
+            await db.execute(
+                "INSERT INTO plans (name, price, max_accounts, description, duration_days) VALUES (?, ?, ?, ?, ?)",
+                (name, price, max_accounts, description, duration_days)
+            )
+            await db.commit()
+
+    async def get_plans(self) -> List[dict]:
+        """Get all available plans."""
+        async with aiosqlite.connect(self.db_path) as db:
+            db.row_factory = aiosqlite.Row
+            async with db.execute("SELECT * FROM plans") as cursor:
+                rows = await cursor.fetchall()
+                return [dict(row) for row in rows]
+
+    async def delete_plan(self, plan_id: int):
+        """Delete a plan."""
+        async with aiosqlite.connect(self.db_path) as db:
+            await db.execute("DELETE FROM plans WHERE id = ?", (plan_id,))
+            await db.commit()
+
+    async def grant_subscription(self, user_id: int, plan_id: int, duration_days: int):
+        """Grant a subscription plan to a user."""
+        from datetime import timedelta
+        expiry = datetime.now() + timedelta(days=duration_days)
+        async with aiosqlite.connect(self.db_path) as db:
+            await db.execute(
+                "UPDATE users SET plan_id = ?, plan_expiry = ? WHERE telegram_id = ?",
+                (plan_id, expiry, user_id)
+            )
+            await db.commit()
+
+    async def get_user_subscription(self, user_id: int) -> dict:
+        """Get user subscription details."""
+        async with aiosqlite.connect(self.db_path) as db:
+            db.row_factory = aiosqlite.Row
+            query = """
+                SELECT u.plan_id, u.plan_expiry, p.name, p.max_accounts
+                FROM users u
+                LEFT JOIN plans p ON u.plan_id = p.id
+                WHERE u.telegram_id = ?
+            """
+            async with db.execute(query, (user_id,)) as cursor:
+                row = await cursor.fetchone()
+                if row and row['plan_id']:
+                    # Check expiry
+                    expiry = datetime.fromisoformat(str(row['plan_expiry'])) if row['plan_expiry'] else None
+                    if expiry and expiry > datetime.now():
+                        return dict(row)
+
+                # Default/Fallback (Free plan assumed if not found or expired)
+                # Ideally, fetch default plan (ID 1 usually) or hardcode free limits
+                return {"name": "Free", "max_accounts": 1, "plan_id": None}
 
     async def add_account(
         self,
@@ -166,3 +252,22 @@ class DBManager:
             )
             await db.commit()
             logger.info(f"Set account {phone_number} as primary receiver for user {user_id}.")
+
+    async def get_all_users_with_accounts(self) -> List[dict]:
+        """Fetch all users and their associated accounts for admin display."""
+        async with aiosqlite.connect(self.db_path) as db:
+            db.row_factory = aiosqlite.Row
+            # Fetch users
+            async with db.execute("SELECT * FROM users") as cursor:
+                users = await cursor.fetchall()
+
+            result = []
+            for user in users:
+                user_dict = dict(user)
+                # Fetch accounts for this user
+                async with db.execute("SELECT * FROM accounts WHERE user_id = ?", (user['telegram_id'],)) as acc_cursor:
+                    accounts = await acc_cursor.fetchall()
+                    user_dict['accounts'] = [dict(acc) for acc in accounts]
+                result.append(user_dict)
+
+            return result
