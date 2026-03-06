@@ -114,16 +114,18 @@ class RechargeManager:
 
                     msg_str = str(response).lower()
 
+                    # Check for specific business errors first, even if status is 200
+                    error_keywords = ["invalid", "used", "not found", "غير صحيح", "مستخدم", "عذراً"]
+                    if any(k in msg_str for k in error_keywords):
+                        error_text = api_message or "الكرت غير صالح أو مستخدم مسبقاً."
+                        return f"❌ خطأ: {error_text}"
+
                     # Check for success
                     # If success is True or message indicates success
                     if isinstance(response, dict) and (response.get("success") is True or "success" in msg_str):
                         pass # Proceed to check balance
                     else:
-                        # Handle specific business errors
-                        if "invalid" in msg_str or "used" in msg_str or "not found" in msg_str:
-                            error_text = api_message or "الكرت غير صالح أو مستخدم مسبقاً."
-                            return f"❌ خطأ: {error_text}"
-                        elif "block" in msg_str or "limit" in msg_str:
+                        if "block" in msg_str or "limit" in msg_str:
                             logger.warning(f"Sender {sender_number} blocked/limited: {msg_str}")
                             continue
 
@@ -141,7 +143,7 @@ class RechargeManager:
 
                     diff = 0.0
                     if new_balance is not None:
-                        diff = new_balance - initial_balance
+                        diff = (new_balance or 0.0) - initial_balance
 
                     if diff > 0:
                         return (
@@ -156,12 +158,13 @@ class RechargeManager:
                     else:
                         # Success response but balance didn't change
                         # Include API message if available to explain why
-                        msg_part = f"\nرسالة الشركة: {api_message}" if api_message else ""
+                        msg_part = f"\n*رسالة الشركة:* {api_message}" if api_message else ""
                         return (
-                            f"✅ تم إرسال طلب الشحن، ولكن لم يتم رصد تغير في الرصيد.\n"
-                            f"الرصيد الحالي: {initial_balance:,.0f} IQD"
-                            f"{msg_part}\n"
-                            f"يرجى التحقق يدوياً."
+                            f"⚠️ *تنبيه: لم يتم رصد زيادة في الرصيد*\n\n"
+                            f"تم إرسال طلب الشحن، ولكن الرصيد لم يتغير.\n"
+                            f"الرصيد الحالي: `{initial_balance:,.0f} IQD`"
+                            f"{msg_part}\n\n"
+                            f"يرجى التحقق من صحة الكرت أو المحاولة لاحقاً."
                         )
 
                 except Exception as e:

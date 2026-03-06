@@ -49,7 +49,7 @@ async def test_phone_handler_invalid_number():
     state = await phone_handler(update, context)
 
     assert state == PHONE
-    update.message.reply_text.assert_called_with("Invalid format. Please send a valid number starting with 077.")
+    update.message.reply_text.assert_called_with("تنسيق خاطئ. الرجاء إرسال رقم صحيح يبدأ بـ 077.")
 
 @pytest.mark.asyncio
 async def test_otp_handler_success():
@@ -57,6 +57,7 @@ async def test_otp_handler_success():
     update.message = MagicMock(spec=Message)
     update.message.text = "123456"
     update.message.reply_text = AsyncMock()
+    update.message.from_user.id = 123
 
     context = MagicMock(spec=ContextTypes.DEFAULT_TYPE)
     context.user_data = {
@@ -66,9 +67,9 @@ async def test_otp_handler_success():
         "cookie": "session_cookie"
     }
 
-    # Mock Client and Repository
+    # Mock Client and DBManager
     with patch("src.bot.handlers.AsiacellClient") as MockClient, \
-         patch("src.bot.handlers.AccountRepository") as MockRepo:
+         patch("src.bot.handlers.DBManager") as MockDB:
 
         client_instance = MockClient.return_value
         client_instance.__aenter__.return_value = client_instance
@@ -79,13 +80,22 @@ async def test_otp_handler_success():
             refresh_token="ref_tok"
         ))
 
-        repo_instance = MockRepo.return_value
-        repo_instance.init_db = AsyncMock()
-        repo_instance.save_account = AsyncMock()
+        db_instance = MockDB.return_value
+        db_instance.add_account = AsyncMock()
+        db_instance.create_user_if_not_exists = AsyncMock()
+        db_instance.update_user_profile = AsyncMock()
 
-        state = await otp_handler(update, context)
+        with patch("src.bot.handlers.start", new_callable=AsyncMock) as mock_start:
+            state = await otp_handler(update, context)
 
-        assert state == ConversationHandler.END
-        client_instance.validate_sms_code.assert_called_with("session_cookie", "device-id-123", "test-pid", "123456")
-        repo_instance.save_account.assert_called_with("07712345678", "acc_tok", "ref_tok", "device-id-123", "session_cookie")
-        update.message.reply_text.assert_called_with("Login Successful! Account Saved.")
+            assert state == ConversationHandler.END
+            client_instance.validate_sms_code.assert_called_with("session_cookie", "device-id-123", "test-pid", "123456")
+            db_instance.add_account.assert_called_with(
+                user_id=123,
+                phone_number="07712345678",
+                device_id="device-id-123",
+                cookie="session_cookie",
+                access_token="acc_tok",
+                refresh_token="ref_tok"
+            )
+            update.message.reply_text.assert_called_with("جاري التحقق...")
