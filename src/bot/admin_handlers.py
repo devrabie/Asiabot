@@ -10,11 +10,18 @@ GRANT_USER_ID, GRANT_PLAN_SELECT, GRANT_DURATION = range(3)
 # States for Settings Conversation
 SETTING_VALUE = range(10, 11)
 
+async def _safe_answer(query, text=None, show_alert=False):
+    """Safely answer a callback query, ignoring timeout errors."""
+    try:
+        await query.answer(text=text, show_alert=show_alert)
+    except Exception:
+        pass
+
 async def check_admin(update: Update) -> bool:
     user_id = update.effective_user.id
     if user_id != settings.ADMIN_ID:
         if update.callback_query:
-            await update.callback_query.answer("⛔ Unauthorized.", show_alert=True)
+            await _safe_answer(update.callback_query, "⛔ Unauthorized.", show_alert=True)
         else:
             await update.message.reply_text("⛔ Unauthorized access.")
         return False
@@ -35,7 +42,7 @@ async def admin_dashboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = "🔐 **Admin Dashboard**\nSelect an option:"
 
     if update.callback_query:
-        await update.callback_query.answer()
+        await _safe_answer(update.callback_query)
         await update.callback_query.edit_message_text(text, parse_mode="Markdown", reply_markup=reply_markup)
     else:
         await update.message.reply_text(text, parse_mode="Markdown", reply_markup=reply_markup)
@@ -44,7 +51,7 @@ async def admin_users_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """List all users."""
     if not await check_admin(update): return
     query = update.callback_query
-    await query.answer("Fetching users...")
+    await _safe_answer(query, "Fetching users...")
 
     db = DBManager()
     users = await db.get_all_users_with_accounts()
@@ -67,6 +74,7 @@ async def admin_user_details(update: Update, context: ContextTypes.DEFAULT_TYPE)
     """Show user details."""
     if not await check_admin(update): return
     query = update.callback_query
+    await _safe_answer(query)
     user_id = int(query.data.split("_")[2])
 
     db = DBManager()
@@ -106,7 +114,7 @@ async def admin_plans_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """List plans."""
     if not await check_admin(update): return
     query = update.callback_query
-    await query.answer()
+    await _safe_answer(query)
 
     db = DBManager()
     plans = await db.get_plans()
@@ -135,7 +143,7 @@ async def admin_delete_plan(update: Update, context: ContextTypes.DEFAULT_TYPE):
     plan_id = int(query.data.split("_")[2])
     db = DBManager()
     await db.delete_plan(plan_id)
-    await query.answer("Plan deleted.")
+    await _safe_answer(query, "Plan deleted.")
     await admin_plans_list(update, context)
 
 async def admin_close(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -145,7 +153,7 @@ async def admin_close(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # --- Add Plan Conversation ---
 async def add_plan_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    await query.answer()
+    await _safe_answer(query)
     await query.message.reply_text("Enter Plan Name:")
     return PLAN_NAME
 
@@ -239,10 +247,10 @@ async def edit_plan_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     plan = next((p for p in plans if p['id'] == plan_id), None)
 
     if not plan:
-        await query.answer("Plan not found.")
+        await _safe_answer(query, "Plan not found.")
         return
 
-    await query.answer()
+    await _safe_answer(query)
     context.user_data['edit_plan_id'] = plan_id
     context.user_data['p_name'] = plan['name']
     context.user_data['p_price'] = plan['price']
@@ -262,7 +270,7 @@ async def cancel_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # --- Grant Plan Conversation ---
 async def grant_plan_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    await query.answer()
+    await _safe_answer(query)
     await query.message.reply_text("Enter User Telegram ID:")
     return GRANT_USER_ID
 
@@ -289,7 +297,7 @@ async def grant_user_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def grant_plan_select(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    await query.answer()
+    await _safe_answer(query)
     pid = int(query.data)
     context.user_data['g_pid'] = pid
 
@@ -319,7 +327,7 @@ async def grant_duration(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def admin_settings_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await check_admin(update): return
     query = update.callback_query
-    await query.answer()
+    await _safe_answer(query)
 
     keyboard = [
         [InlineKeyboardButton("📝 Edit About Text", callback_data="admin_set_about_text")],
@@ -336,7 +344,7 @@ async def admin_set_setting_start(update: Update, context: ContextTypes.DEFAULT_
     db = DBManager()
     current_val = await db.get_setting(setting_key)
 
-    await query.answer()
+    await _safe_answer(query)
     await query.message.reply_text(f"Enter new value for `{setting_key}`:\n\nCurrent value:\n`{current_val}`", parse_mode="Markdown")
     return SETTING_VALUE
 

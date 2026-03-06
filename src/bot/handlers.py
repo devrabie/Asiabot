@@ -23,6 +23,13 @@ RECHARGE_INPUT = 2
 
 # --- Handlers ---
 
+async def _safe_answer(query):
+    """Safely answer a callback query, ignoring timeout errors."""
+    try:
+        await query.answer()
+    except Exception:
+        pass
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Sends the main menu."""
     user = update.effective_user
@@ -41,7 +48,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # Check if this is a callback or a new message
     if update.callback_query:
-        await update.callback_query.answer()
+        await _safe_answer(update.callback_query)
         await update.callback_query.edit_message_text("مرحباً بك في بوت آسياسيل! اختر من القائمة:", reply_markup=reply_markup)
     else:
         await update.message.reply_text("مرحباً بك في بوت آسياسيل! اختر من القائمة:", reply_markup=reply_markup)
@@ -79,7 +86,7 @@ async def _get_plans_text(user_id: int) -> str:
 async def about_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Shows about info."""
     query = update.callback_query
-    await query.answer()
+    await _safe_answer(query)
 
     db = DBManager()
     text = await db.get_setting("about_text", "🤖 **Asiabot**\nبوت لإدارة حسابات آسياسيل.\nيمكنك مراقبة الرصيد وتجديد الرموز تلقائياً.\n\nDev: @YourUsername")
@@ -92,7 +99,7 @@ async def about_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def my_accounts_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Lists user accounts."""
     query = update.callback_query
-    await query.answer()
+    await _safe_answer(query)
     user_id = query.from_user.id
 
     db = DBManager()
@@ -115,7 +122,10 @@ async def account_details_handler(update: Update, context: ContextTypes.DEFAULT_
     """Shows details for a specific account, verifying and refreshing data live."""
     query = update.callback_query
     # We delay answering or show loading because we will do a network request
-    await query.answer("جاري جلب تفاصيل الحساب...")
+    try:
+        await query.answer("جاري جلب تفاصيل الحساب...")
+    except:
+        pass
     await query.edit_message_text("⏳ جاري الاتصال بخوادم آسياسيل لجلب أحدث البيانات...")
 
     phone = query.data.split("_")[1]
@@ -256,7 +266,7 @@ async def refresh_balance_handler(update: Update, context: ContextTypes.DEFAULT_
 async def delete_confirm_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Asks for deletion confirmation."""
     query = update.callback_query
-    await query.answer()
+    await _safe_answer(query)
     phone = query.data.split("_")[1]
 
     text = f"هل أنت متأكد من حذف الحساب `{phone}`؟"
@@ -272,7 +282,7 @@ async def delete_confirm_handler(update: Update, context: ContextTypes.DEFAULT_T
 async def delete_action_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Deletes the account."""
     query = update.callback_query
-    await query.answer()
+    await _safe_answer(query)
     phone = query.data.split("_")[1]
     user_id = query.from_user.id
 
@@ -289,7 +299,7 @@ async def delete_action_handler(update: Update, context: ContextTypes.DEFAULT_TY
 async def set_primary_receiver_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Sets the account as primary receiver."""
     query = update.callback_query
-    await query.answer()
+    await _safe_answer(query)
 
     phone = query.data.split("_")[1]
     user_id = query.from_user.id
@@ -331,7 +341,7 @@ async def start_recharge(update: Update, context: ContextTypes.DEFAULT_TYPE):
     reply_markup = InlineKeyboardMarkup(keyboard)
 
     if update.callback_query:
-        await update.callback_query.answer()
+        await _safe_answer(update.callback_query)
         await update.callback_query.edit_message_text(text, parse_mode="Markdown", reply_markup=reply_markup)
     else:
         await update.message.reply_text(text, parse_mode="Markdown", reply_markup=reply_markup)
@@ -405,7 +415,7 @@ async def recharge_input_handler(update: Update, context: ContextTypes.DEFAULT_T
 async def show_plans_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Shows available subscription plans."""
     query = update.callback_query
-    await query.answer()
+    await _safe_answer(query)
 
     text = await _get_plans_text(query.from_user.id)
     keyboard = [[InlineKeyboardButton("🔙 رجوع", callback_data="main_menu")]]
@@ -439,7 +449,7 @@ async def add_account_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     reply_markup = InlineKeyboardMarkup(keyboard)
 
     if query:
-        await query.answer()
+        await _safe_answer(query)
         await query.edit_message_text(text, reply_markup=reply_markup)
     else:
         await update.message.reply_text(text, reply_markup=reply_markup)
@@ -550,7 +560,7 @@ async def cancel_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Cancels the conversation via callback button."""
     query = update.callback_query
     if query:
-        await query.answer()
+        await _safe_answer(query)
         # Return to main menu instead of just saying cancelled
         await start(update, context)
     return ConversationHandler.END
