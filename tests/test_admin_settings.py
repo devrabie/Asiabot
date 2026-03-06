@@ -1,6 +1,7 @@
 import pytest
 import os
 import tempfile
+import aiosqlite
 from src.database.db_manager import DBManager
 
 @pytest.fixture
@@ -74,3 +75,20 @@ async def test_get_user_subscription_fallback(db_path):
     sub = await db.get_user_subscription(999)
     assert sub['name'] == "No active plan"
     assert sub['max_accounts'] == 0
+
+@pytest.mark.asyncio
+async def test_get_user_subscription_orphaned_id(db_path):
+    db = DBManager(db_path=db_path)
+    await db.init_db()
+
+    user_id = 111
+    await db.create_user_if_not_exists(user_id)
+
+    # Manually set an orphaned plan_id
+    async with aiosqlite.connect(db_path) as conn:
+        await conn.execute("UPDATE users SET plan_id = 999 WHERE telegram_id = ?", (user_id,))
+        await conn.commit()
+
+    # Should fallback to 'Free' (seeded in init_db)
+    sub = await db.get_user_subscription(user_id)
+    assert sub['name'] == "Free"

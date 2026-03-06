@@ -163,54 +163,73 @@ class DBManager:
             await db.commit()
 
     async def get_user_subscription(self, user_id: int) -> dict:
-        """Get user subscription details."""
-        async with aiosqlite.connect(self.db_path) as db:
-            db.row_factory = aiosqlite.Row
-            query = """
-                SELECT u.plan_id, u.plan_expiry, u.text_recharges_count, u.image_recharges_count,
-                       p.name, p.max_accounts, p.max_text_recharges, p.max_image_recharges
-                FROM users u
-                LEFT JOIN plans p ON u.plan_id = p.id
-                WHERE u.telegram_id = ?
-            """
-            async with db.execute(query, (user_id,)) as cursor:
-                row = await cursor.fetchone()
-                if row:
-                    user_usage = {
-                        "text_recharges_count": row["text_recharges_count"] or 0,
-                        "image_recharges_count": row["image_recharges_count"] or 0
-                    }
+        """Get user subscription details with robust expiry handling and logging."""
+        try:
+            async with aiosqlite.connect(self.db_path) as db:
+                db.row_factory = aiosqlite.Row
+                query = """
+                    SELECT u.plan_id, u.plan_expiry, u.text_recharges_count, u.image_recharges_count,
+                           p.name, p.max_accounts, p.max_text_recharges, p.max_image_recharges
+                    FROM users u
+                    LEFT JOIN plans p ON u.plan_id = p.id
+                    WHERE u.telegram_id = ?
+                """
+                async with db.execute(query, (user_id,)) as cursor:
+                    row = await cursor.fetchone()
+                    if row:
+                        user_usage = {
+                            "text_recharges_count": row["text_recharges_count"] or 0,
+                            "image_recharges_count": row["image_recharges_count"] or 0
+                        }
 
-                    if row['plan_id']:
-                        # Check expiry
-                        expiry = None
-                        if row['plan_expiry']:
-                            try:
-                                expiry = datetime.fromisoformat(str(row['plan_expiry']))
-                            except:
-                                pass
+                        logger.debug(f"Subscription check for {user_id}: plan_id={row['plan_id']}, name={row['name']}, usage={user_usage}")
 
-                        if expiry and expiry > datetime.now():
-                            return dict(row)
+                        if row['plan_id'] and row['name']:
+                            # Check expiry
+                            expiry = None
+                            if row['plan_expiry']:
+                                try:
+                                    expiry_str = str(row['plan_expiry'])
+                                    # Support various SQLite date formats
+                                    if ' ' in expiry_str and 'T' not in expiry_str:
+                                        expiry = datetime.strptime(expiry_str.split('.')[0], "%Y-%m-%d %H:%M:%S")
+                                    else:
+                                        expiry = datetime.fromisoformat(expiry_str)
+                                except Exception as e:
+                                    logger.warning(f"Failed to parse expiry '{row['plan_expiry']}' for user {user_id}: {e}")
 
-                    # Fallback: Try to find a plan named 'Free'
-                    async with db.execute("SELECT name, max_accounts, max_text_recharges, max_image_recharges FROM plans WHERE name = 'Free' LIMIT 1") as fallback_cursor:
-                        fallback = await fallback_cursor.fetchone()
-                        if fallback:
-                            res = dict(fallback)
-                            res.update(user_usage)
-                            return res
+                            # If no expiry set or not yet expired, return the plan
+                            now = datetime.now()
+                            if expiry is None or expiry > now:
+                                res = dict(row)
+                                res.update(user_usage)
+                                return res
+                            else:
+                                logger.info(f"Subscription expired for user {user_id} (Expiry: {expiry}, Now: {now})")
 
-                # Ultimate fallback: No accounts allowed if no plan found/active
-                return {
-                    "name": "No active plan",
-                    "max_accounts": 0,
-                    "max_text_recharges": 0,
-                    "max_image_recharges": 0,
-                    "text_recharges_count": 0,
-                    "image_recharges_count": 0,
-                    "plan_id": None
-                }
+                        # Fallback: Try to find a plan named 'Free'
+                        async with db.execute("SELECT name, max_accounts, max_text_recharges, max_image_recharges FROM plans WHERE name = 'Free' LIMIT 1") as fallback_cursor:
+                            fallback = await fallback_cursor.fetchone()
+                            if fallback:
+                                logger.debug(f"Falling back to 'Free' plan for user {user_id}")
+                                res = dict(fallback)
+                                res.update(user_usage)
+                                return res
+                    else:
+                        logger.warning(f"No user record found for {user_id} in get_user_subscription")
+        except Exception as e:
+            logger.error(f"Error in get_user_subscription for {user_id}: {e}")
+
+        # Ultimate fallback: No active plan
+        return {
+            "name": "No active plan",
+            "max_accounts": 0,
+            "max_text_recharges": 0,
+            "max_image_recharges": 0,
+            "text_recharges_count": 0,
+            "image_recharges_count": 0,
+            "plan_id": None
+        }
 
     async def get_setting(self, key: str, default: str = "") -> str:
         """Get a setting value."""
