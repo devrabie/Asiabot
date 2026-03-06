@@ -3,10 +3,12 @@ from telegram.ext import ContextTypes, ConversationHandler, CommandHandler, Mess
 from src.config import settings
 from src.database.db_manager import DBManager
 
-# States for Add Plan Conversation
+# States for Add/Edit Plan Conversation
 PLAN_NAME, PLAN_PRICE, PLAN_ACCOUNTS, PLAN_DESC, PLAN_DURATION = range(5)
 # States for Grant Plan Conversation
 GRANT_USER_ID, GRANT_PLAN_SELECT, GRANT_DURATION = range(3)
+# States for Settings Conversation
+SETTING_VALUE = range(10, 11)
 
 async def check_admin(update: Update) -> bool:
     user_id = update.effective_user.id
@@ -26,6 +28,7 @@ async def admin_dashboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("👥 Users", callback_data="admin_users")],
         [InlineKeyboardButton("💎 Plans", callback_data="admin_plans")],
         [InlineKeyboardButton("🎁 Grant Subscription", callback_data="admin_grant_start")],
+        [InlineKeyboardButton("⚙️ Bot Settings", callback_data="admin_settings")],
         [InlineKeyboardButton("🔙 Close", callback_data="admin_close")]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
@@ -112,8 +115,11 @@ async def admin_plans_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
     for plan in plans:
         text += f"🔹 **{plan['name']}** (ID: {plan['id']})\n"
         text += f"   Price: {plan['price']}, Max Accs: {plan['max_accounts']}\n"
-        # Delete button
-        keyboard.append([InlineKeyboardButton(f"❌ Delete {plan['name']}", callback_data=f"admin_delplan_{plan['id']}")])
+        # Edit & Delete buttons
+        keyboard.append([
+            InlineKeyboardButton(f"✏️ Edit {plan['name']}", callback_data=f"admin_editplan_{plan['id']}"),
+            InlineKeyboardButton(f"❌ Delete", callback_data=f"admin_delplan_{plan['id']}")
+        ])
 
     keyboard.append([InlineKeyboardButton("➕ Add New Plan", callback_data="admin_addplan_start")])
     keyboard.append([InlineKeyboardButton("🔙 Back", callback_data="admin_menu")])
@@ -172,21 +178,58 @@ async def add_plan_duration(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         duration = int(update.message.text)
         db = DBManager()
-        await db.add_plan(
-            context.user_data['p_name'],
-            context.user_data['p_price'],
-            context.user_data['p_accs'],
-            context.user_data['p_desc'],
-            duration
-        )
-        await update.message.reply_text("✅ Plan added successfully!")
+
+        plan_id = context.user_data.get('edit_plan_id')
+        if plan_id:
+             await db.update_plan(
+                plan_id,
+                context.user_data['p_name'],
+                context.user_data['p_price'],
+                context.user_data['p_accs'],
+                context.user_data['p_desc'],
+                duration
+            )
+             await update.message.reply_text("✅ Plan updated successfully!")
+        else:
+            await db.add_plan(
+                context.user_data['p_name'],
+                context.user_data['p_price'],
+                context.user_data['p_accs'],
+                context.user_data['p_desc'],
+                duration
+            )
+            await update.message.reply_text("✅ Plan added successfully!")
     except ValueError:
         await update.message.reply_text("Invalid number.")
 
     return ConversationHandler.END
 
+async def edit_plan_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await check_admin(update): return
+    query = update.callback_query
+    plan_id = int(query.data.split("_")[2])
+
+    db = DBManager()
+    plans = await db.get_plans()
+    plan = next((p for p in plans if p['id'] == plan_id), None)
+
+    if not plan:
+        await query.answer("Plan not found.")
+        return
+
+    await query.answer()
+    context.user_data['edit_plan_id'] = plan_id
+    context.user_data['p_name'] = plan['name']
+    context.user_data['p_price'] = plan['price']
+    context.user_data['p_accs'] = plan['max_accounts']
+    context.user_data['p_desc'] = plan['description']
+
+    await query.message.reply_text(f"Editing Plan: {plan['name']}\nEnter New Name (current: {plan['name']}):")
+    return PLAN_NAME
+
 async def cancel_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Operation cancelled.")
+    context.user_data.clear()
     return ConversationHandler.END
 
 # --- Grant Plan Conversation ---
@@ -244,10 +287,51 @@ async def grant_duration(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     return ConversationHandler.END
 
+# --- Settings Management ---
+
+async def admin_settings_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await check_admin(update): return
+    query = update.callback_query
+    await query.answer()
+
+    keyboard = [
+        [InlineKeyboardButton("📝 Edit About Text", callback_data="admin_set_about_text")],
+        [InlineKeyboardButton("🔔 Edit Subscription Message", callback_data="admin_set_subscribe_message")],
+        [InlineKeyboardButton("🔙 Back", callback_data="admin_menu")]
+    ]
+    await query.edit_message_text("⚙️ **Bot Settings**\nSelect a setting to modify:", parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
+
+async def admin_set_setting_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    setting_key = query.data.replace("admin_set_", "")
+    context.user_data["edit_setting_key"] = setting_key
+
+    db = DBManager()
+    current_val = await db.get_setting(setting_key)
+
+    await query.answer()
+    await query.message.reply_text(f"Enter new value for `{setting_key}`:\n\nCurrent value:\n`{current_val}`", parse_mode="Markdown")
+    return SETTING_VALUE
+
+async def admin_save_setting(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    new_val = update.message.text
+    key = context.user_data.get("edit_setting_key")
+
+    if key:
+        db = DBManager()
+        await db.set_setting(key, new_val)
+        await update.message.reply_text(f"✅ Setting `{key}` updated!")
+
+    context.user_data.clear()
+    return ConversationHandler.END
+
 # Export Handlers
 def get_admin_handlers():
     add_plan_conv = ConversationHandler(
-        entry_points=[CallbackQueryHandler(add_plan_start, pattern="^admin_addplan_start$")],
+        entry_points=[
+            CallbackQueryHandler(add_plan_start, pattern="^admin_addplan_start$"),
+            CallbackQueryHandler(edit_plan_start, pattern="^admin_editplan_")
+        ],
         states={
             PLAN_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_plan_name)],
             PLAN_PRICE: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_plan_price)],
@@ -268,10 +352,20 @@ def get_admin_handlers():
         fallbacks=[CommandHandler("cancel", cancel_admin)]
     )
 
+    settings_conv = ConversationHandler(
+        entry_points=[CallbackQueryHandler(admin_set_setting_start, pattern="^admin_set_")],
+        states={
+            SETTING_VALUE: [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_save_setting)],
+        },
+        fallbacks=[CommandHandler("cancel", cancel_admin)]
+    )
+
     return [
         add_plan_conv,
         grant_plan_conv,
+        settings_conv,
         CallbackQueryHandler(admin_dashboard, pattern="^admin_menu$"),
+        CallbackQueryHandler(admin_settings_menu, pattern="^admin_settings$"),
         CallbackQueryHandler(admin_users_list, pattern="^admin_users$"),
         CallbackQueryHandler(admin_user_details, pattern="^admin_user_"),
         CallbackQueryHandler(admin_plans_list, pattern="^admin_plans$"),

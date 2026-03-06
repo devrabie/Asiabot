@@ -54,6 +54,19 @@ class DBManager:
             except Exception as e:
                 logger.error(f"Error seeding plans: {e}")
 
+            # Seed default settings
+            try:
+                default_settings = [
+                    ("about_text", "🤖 **Asiabot**\nبوت لإدارة حسابات آسياسيل.\nيمكنك مراقبة الرصيد وتجديد الرموز تلقائياً.\n\nDev: @YourUsername"),
+                    ("subscribe_message", "للاشتراك في الخطط يرجى التواصل مع الدعم.")
+                ]
+                await db.executemany(
+                    "INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)",
+                    default_settings
+                )
+            except Exception as e:
+                logger.error(f"Error seeding settings: {e}")
+
             await db.commit()
             logger.info("Database initialized successfully.")
 
@@ -89,9 +102,22 @@ class DBManager:
         """Get all available plans."""
         async with aiosqlite.connect(self.db_path) as db:
             db.row_factory = aiosqlite.Row
-            async with db.execute("SELECT * FROM plans") as cursor:
+            async with db.execute("SELECT * FROM plans ORDER BY price ASC") as cursor:
                 rows = await cursor.fetchall()
                 return [dict(row) for row in rows]
+
+    async def update_plan(self, plan_id: int, name: str, price: float, max_accounts: int, description: str, duration_days: int):
+        """Update an existing plan."""
+        async with aiosqlite.connect(self.db_path) as db:
+            await db.execute(
+                """
+                UPDATE plans
+                SET name = ?, price = ?, max_accounts = ?, description = ?, duration_days = ?
+                WHERE id = ?
+                """,
+                (name, price, max_accounts, description, duration_days, plan_id)
+            )
+            await db.commit()
 
     async def delete_plan(self, plan_id: int):
         """Delete a plan."""
@@ -124,13 +150,39 @@ class DBManager:
                 row = await cursor.fetchone()
                 if row and row['plan_id']:
                     # Check expiry
-                    expiry = datetime.fromisoformat(str(row['plan_expiry'])) if row['plan_expiry'] else None
+                    expiry = None
+                    if row['plan_expiry']:
+                        try:
+                            expiry = datetime.fromisoformat(str(row['plan_expiry']))
+                        except:
+                            pass
+
                     if expiry and expiry > datetime.now():
                         return dict(row)
 
-                # Default/Fallback (Free plan assumed if not found or expired)
-                # Ideally, fetch default plan (ID 1 usually) or hardcode free limits
+                # Fallback to the first plan (usually 'Free' with ID 1)
+                async with db.execute("SELECT name, max_accounts FROM plans LIMIT 1") as fallback_cursor:
+                    fallback = await fallback_cursor.fetchone()
+                    if fallback:
+                        return dict(fallback)
+
                 return {"name": "Free", "max_accounts": 1, "plan_id": None}
+
+    async def get_setting(self, key: str, default: str = "") -> str:
+        """Get a setting value."""
+        async with aiosqlite.connect(self.db_path) as db:
+            async with db.execute("SELECT value FROM settings WHERE key = ?", (key,)) as cursor:
+                row = await cursor.fetchone()
+                return row[0] if row else default
+
+    async def set_setting(self, key: str, value: str):
+        """Set a setting value."""
+        async with aiosqlite.connect(self.db_path) as db:
+            await db.execute(
+                "INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)",
+                (key, value)
+            )
+            await db.commit()
 
     async def add_account(
         self,

@@ -55,12 +55,9 @@ async def about_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
 
-    text = (
-        "🤖 **Asiabot**\n"
-        "بوت لإدارة حسابات آسياسيل.\n"
-        "يمكنك مراقبة الرصيد وتجديد الرموز تلقائياً.\n\n"
-        "Dev: @YourUsername"
-    )
+    db = DBManager()
+    text = await db.get_setting("about_text", "🤖 **Asiabot**\nبوت لإدارة حسابات آسياسيل.\nيمكنك مراقبة الرصيد وتجديد الرموز تلقائياً.\n\nDev: @YourUsername")
+
     keyboard = [[InlineKeyboardButton("🔙 رجوع", callback_data="main_menu")]]
     reply_markup = InlineKeyboardMarkup(keyboard)
 
@@ -377,7 +374,8 @@ async def show_plans_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
             text += f"   ℹ️ {plan['description']}\n"
         text += "\n"
 
-    text += "للاشتراك يرجى التواصل مع الدعم."
+    subscribe_message = await db.get_setting("subscribe_message", "للاشتراك يرجى التواصل مع الدعم.")
+    text += subscribe_message
     keyboard = [[InlineKeyboardButton("🔙 رجوع", callback_data="main_menu")]]
     await query.edit_message_text(text=text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
 
@@ -394,7 +392,8 @@ async def add_account_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     sub = await db.get_user_subscription(user_id)
     accounts = await db.get_user_accounts(user_id)
     if len(accounts) >= sub['max_accounts']:
-        await query.answer("❌ لقد تجاوزت الحد الأقصى للحسابات المسموح به في خطتك.", show_alert=True)
+        subscribe_message = await db.get_setting("subscribe_message", "❌ لقد تجاوزت الحد الأقصى للحسابات المسموح به في خطتك.")
+        await query.answer(subscribe_message, show_alert=True)
         return ConversationHandler.END
 
     text = "الرجاء إرسال رقم آسياسيل الخاص بك (077xxxxxxxx):"

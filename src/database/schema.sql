@@ -32,3 +32,8 @@ CREATE TABLE IF NOT EXISTS accounts (
     is_primary_receiver BOOLEAN DEFAULT 0,
     FOREIGN KEY(user_id) REFERENCES users(telegram_id) ON DELETE CASCADE
 );
+
+CREATE TABLE IF NOT EXISTS settings (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
