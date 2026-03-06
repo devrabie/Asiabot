@@ -50,6 +50,32 @@ async def main_menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
     """Callback wrapper for returning to main menu."""
     await start(update, context)
 
+async def _get_plans_text(user_id: int) -> str:
+    """Helper to generate the plans and subscription status text."""
+    db = DBManager()
+    plans = await db.get_plans()
+    user_sub = await db.get_user_subscription(user_id)
+
+    text = "💎 **الخطط المتاحة**\n\n"
+    text += f"خطة اشتراكك الحالية: **{user_sub['name']}**\n"
+    text += f"الحد الأقصى للحسابات: `{user_sub['max_accounts']}`\n"
+    text += f"شحن كروت (نص): `{user_sub.get('text_recharges_count', 0)}/{user_sub.get('max_text_recharges', 0)}`\n"
+    text += f"شحن كروت (صور): `{user_sub.get('image_recharges_count', 0)}/{user_sub.get('max_image_recharges', 0)}`\n\n"
+
+    for plan in plans:
+        text += f"🔹 **{plan['name']}**\n"
+        text += f"   💰 السعر: `{plan['price']} IQD`\n"
+        text += f"   🔢 عدد الحسابات: `{plan['max_accounts']}`\n"
+        text += f"   📝 شحن نصي: `{plan.get('max_text_recharges')}`\n"
+        text += f"   📸 شحن صوري: `{plan.get('max_image_recharges')}`\n"
+        if plan['description']:
+            text += f"   ℹ️ {plan['description']}\n"
+        text += "\n"
+
+    subscribe_message = await db.get_setting("subscribe_message", "للاشتراك يرجى التواصل مع الدعم.")
+    text += f"\n{subscribe_message}"
+    return text
+
 async def about_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Shows about info."""
     query = update.callback_query
@@ -322,12 +348,18 @@ async def recharge_input_handler(update: Update, context: ContextTypes.DEFAULT_T
 
     if update.message.text:
         if sub['text_recharges_count'] >= sub['max_text_recharges']:
-             await update.message.reply_text("❌ لقد وصلت للحد الأقصى المسموح به لشحن الكروت عبر النص في خطتك.")
+             text = "❌ لقد وصلت للحد الأقصى المسموح به لشحن الكروت عبر النص في خطتك.\n\n"
+             text += await _get_plans_text(user_id)
+             keyboard = [[InlineKeyboardButton("🔙 رجوع", callback_data="main_menu")]]
+             await update.message.reply_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
              return ConversationHandler.END
         text = update.message.text
     elif update.message.photo:
         if sub['image_recharges_count'] >= sub['max_image_recharges']:
-             await update.message.reply_text("❌ لقد وصلت للحد الأقصى المسموح به لشحن الكروت عبر الصور في خطتك.")
+             text = "❌ لقد وصلت للحد الأقصى المسموح به لشحن الكروت عبر الصور في خطتك.\n\n"
+             text += await _get_plans_text(user_id)
+             keyboard = [[InlineKeyboardButton("🔙 رجوع", callback_data="main_menu")]]
+             await update.message.reply_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
              return ConversationHandler.END
         feature_type = "image"
         await update.message.reply_text("⏳ جاري تحليل الصورة واستخراج الكود...")
@@ -375,24 +407,7 @@ async def show_plans_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
     query = update.callback_query
     await query.answer()
 
-    db = DBManager()
-    plans = await db.get_plans()
-    user_sub = await db.get_user_subscription(query.from_user.id)
-
-    text = "💎 **الخطط المتاحة**\n\n"
-    text += f"خطة اشتراكك الحالية: **{user_sub['name']}**\n"
-    text += f"الحد الأقصى للحسابات: {user_sub['max_accounts']}\n\n"
-
-    for plan in plans:
-        text += f"🔹 **{plan['name']}**\n"
-        text += f"   💰 السعر: {plan['price']} IQD\n"
-        text += f"   🔢 عدد الحسابات: {plan['max_accounts']}\n"
-        if plan['description']:
-            text += f"   ℹ️ {plan['description']}\n"
-        text += "\n"
-
-    subscribe_message = await db.get_setting("subscribe_message", "للاشتراك يرجى التواصل مع الدعم.")
-    text += subscribe_message
+    text = await _get_plans_text(query.from_user.id)
     keyboard = [[InlineKeyboardButton("🔙 رجوع", callback_data="main_menu")]]
     await query.edit_message_text(text=text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
 
@@ -409,8 +424,14 @@ async def add_account_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     sub = await db.get_user_subscription(user_id)
     accounts = await db.get_user_accounts(user_id)
     if len(accounts) >= sub['max_accounts']:
-        subscribe_message = await db.get_setting("subscribe_message", "❌ لقد تجاوزت الحد الأقصى للحسابات المسموح به في خطتك.")
-        await query.answer(subscribe_message, show_alert=True)
+        text = "❌ لقد تجاوزت الحد الأقصى للحسابات المسموح به في خطتك.\n\n"
+        text += await _get_plans_text(user_id)
+        keyboard = [[InlineKeyboardButton("🔙 رجوع", callback_data="main_menu")]]
+
+        if query:
+            await query.edit_message_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
+        else:
+            await update.message.reply_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
         return ConversationHandler.END
 
     text = "الرجاء إرسال رقم آسياسيل الخاص بك (077xxxxxxxx):"
