@@ -23,10 +23,10 @@ RECHARGE_INPUT = 2
 
 # --- Handlers ---
 
-async def _safe_answer(query):
+async def _safe_answer(query, text=None, show_alert=False):
     """Safely answer a callback query, ignoring timeout errors."""
     try:
-        await query.answer()
+        await query.answer(text=text, show_alert=show_alert)
     except Exception:
         pass
 
@@ -57,6 +57,11 @@ async def main_menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
     """Callback wrapper for returning to main menu."""
     await start(update, context)
 
+def _escape_markdown(text: str) -> str:
+    """Escapes underscores and asterisks for Markdown (Legacy)."""
+    if not text: return ""
+    return str(text).replace("_", "\\_").replace("*", "\\*")
+
 async def _get_plans_text(user_id: int) -> str:
     """Helper to generate the plans and subscription status text."""
     db = DBManager()
@@ -64,19 +69,19 @@ async def _get_plans_text(user_id: int) -> str:
     user_sub = await db.get_user_subscription(user_id)
 
     text = "💎 **الخطط المتاحة**\n\n"
-    text += f"خطة اشتراكك الحالية: **{user_sub['name']}**\n"
+    text += f"خطة اشتراكك الحالية: **{_escape_markdown(user_sub['name'])}**\n"
     text += f"الحد الأقصى للحسابات: `{user_sub['max_accounts']}`\n"
     text += f"شحن كروت (نص): `{user_sub.get('text_recharges_count', 0)}/{user_sub.get('max_text_recharges', 0)}`\n"
     text += f"شحن كروت (صور): `{user_sub.get('image_recharges_count', 0)}/{user_sub.get('max_image_recharges', 0)}`\n\n"
 
     for plan in plans:
-        text += f"🔹 **{plan['name']}**\n"
+        text += f"🔹 **{_escape_markdown(plan['name'])}**\n"
         text += f"   💰 السعر: `{plan['price']} IQD`\n"
         text += f"   🔢 عدد الحسابات: `{plan['max_accounts']}`\n"
         text += f"   📝 شحن نصي: `{plan.get('max_text_recharges')}`\n"
         text += f"   📸 شحن صوري: `{plan.get('max_image_recharges')}`\n"
         if plan['description']:
-            text += f"   ℹ️ {plan['description']}\n"
+            text += f"   ℹ️ {_escape_markdown(plan['description'])}\n"
         text += "\n"
 
     subscribe_message = await db.get_setting("subscribe_message", "للاشتراك يرجى التواصل مع الدعم.")

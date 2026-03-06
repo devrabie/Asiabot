@@ -17,6 +17,11 @@ async def _safe_answer(query, text=None, show_alert=False):
     except Exception:
         pass
 
+def _escape_markdown(text: str) -> str:
+    """Escapes underscores for Markdown (Legacy)."""
+    if not text: return ""
+    return text.replace("_", "\\_").replace("*", "\\*")
+
 async def check_admin(update: Update) -> bool:
     user_id = update.effective_user.id
     if user_id != settings.ADMIN_ID:
@@ -89,8 +94,8 @@ async def admin_user_details(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
     text = f"👤 **User Details**\n"
     text += f"ID: `{user_data['telegram_id']}`\n"
-    text += f"Name: {user_data.get('first_name')}\n"
-    text += f"Username: @{user_data.get('username')}\n"
+    text += f"Name: {_escape_markdown(user_data.get('first_name', 'None'))}\n"
+    text += f"Username: @{_escape_markdown(user_data.get('username', 'None'))}\n"
 
     sub = await db.get_user_subscription(user_id)
     text += f"Plan: {sub.get('name', 'Free')} (Max: {sub.get('max_accounts')})\n"
