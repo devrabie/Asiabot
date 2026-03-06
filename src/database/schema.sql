@@ -6,6 +6,8 @@ CREATE TABLE IF NOT EXISTS users (
     first_name TEXT,
     plan_id INTEGER,
     plan_expiry TIMESTAMP,
+    text_recharges_count INTEGER DEFAULT 0,
+    image_recharges_count INTEGER DEFAULT 0,
     FOREIGN KEY(plan_id) REFERENCES plans(id)
 );
 
@@ -14,6 +16,8 @@ CREATE TABLE IF NOT EXISTS plans (
     name TEXT NOT NULL,
     price REAL DEFAULT 0,
     max_accounts INTEGER DEFAULT 1,
+    max_text_recharges INTEGER DEFAULT 10,
+    max_image_recharges INTEGER DEFAULT 5,
     description TEXT,
     duration_days INTEGER DEFAULT 30
 );
@@ -31,4 +35,9 @@ CREATE TABLE IF NOT EXISTS accounts (
     token_updated_at TIMESTAMP,
     is_primary_receiver BOOLEAN DEFAULT 0,
     FOREIGN KEY(user_id) REFERENCES users(telegram_id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS settings (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL
 );

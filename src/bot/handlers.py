@@ -23,6 +23,13 @@ RECHARGE_INPUT = 2
 
 # --- Handlers ---
 
+async def _safe_answer(query, text=None, show_alert=False):
+    """Safely answer a callback query, ignoring timeout errors."""
+    try:
+        await query.answer(text=text, show_alert=show_alert)
+    except Exception:
+        pass
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Sends the main menu."""
     user = update.effective_user
@@ -41,7 +48,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # Check if this is a callback or a new message
     if update.callback_query:
-        await update.callback_query.answer()
+        await _safe_answer(update.callback_query)
         await update.callback_query.edit_message_text("مرحباً بك في بوت آسياسيل! اختر من القائمة:", reply_markup=reply_markup)
     else:
         await update.message.reply_text("مرحباً بك في بوت آسياسيل! اختر من القائمة:", reply_markup=reply_markup)
@@ -50,17 +57,45 @@ async def main_menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
     """Callback wrapper for returning to main menu."""
     await start(update, context)
 
+def _escape_markdown(text: str) -> str:
+    """Escapes underscores and asterisks for Markdown (Legacy)."""
+    if not text: return ""
+    return str(text).replace("_", "\\_").replace("*", "\\*")
+
+async def _get_plans_text(user_id: int) -> str:
+    """Helper to generate the plans and subscription status text."""
+    db = DBManager()
+    plans = await db.get_plans()
+    user_sub = await db.get_user_subscription(user_id)
+
+    text = "💎 **الخطط المتاحة**\n\n"
+    text += f"خطة اشتراكك الحالية: **{_escape_markdown(user_sub['name'])}**\n"
+    text += f"الحد الأقصى للحسابات: `{user_sub['max_accounts']}`\n"
+    text += f"شحن كروت (نص): `{user_sub.get('text_recharges_count', 0)}/{user_sub.get('max_text_recharges', 0)}`\n"
+    text += f"شحن كروت (صور): `{user_sub.get('image_recharges_count', 0)}/{user_sub.get('max_image_recharges', 0)}`\n\n"
+
+    for plan in plans:
+        text += f"🔹 **{_escape_markdown(plan['name'])}**\n"
+        text += f"   💰 السعر: `{plan['price']} IQD`\n"
+        text += f"   🔢 عدد الحسابات: `{plan['max_accounts']}`\n"
+        text += f"   📝 شحن نصي: `{plan.get('max_text_recharges')}`\n"
+        text += f"   📸 شحن صوري: `{plan.get('max_image_recharges')}`\n"
+        if plan['description']:
+            text += f"   ℹ️ {_escape_markdown(plan['description'])}\n"
+        text += "\n"
+
+    subscribe_message = await db.get_setting("subscribe_message", "للاشتراك يرجى التواصل مع الدعم.")
+    text += f"\n{subscribe_message}"
+    return text
+
 async def about_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Shows about info."""
     query = update.callback_query
-    await query.answer()
+    await _safe_answer(query)
 
-    text = (
-        "🤖 **Asiabot**\n"
-        "بوت لإدارة حسابات آسياسيل.\n"
-        "يمكنك مراقبة الرصيد وتجديد الرموز تلقائياً.\n\n"
-        "Dev: @YourUsername"
-    )
+    db = DBManager()
+    text = await db.get_setting("about_text", "🤖 **Asiabot**\nبوت لإدارة حسابات آسياسيل.\nيمكنك مراقبة الرصيد وتجديد الرموز تلقائياً.\n\nDev: @YourUsername")
+
     keyboard = [[InlineKeyboardButton("🔙 رجوع", callback_data="main_menu")]]
     reply_markup = InlineKeyboardMarkup(keyboard)
 
@@ -69,7 +104,7 @@ async def about_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def my_accounts_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Lists user accounts."""
     query = update.callback_query
-    await query.answer()
+    await _safe_answer(query)
     user_id = query.from_user.id
 
     db = DBManager()
@@ -92,7 +127,10 @@ async def account_details_handler(update: Update, context: ContextTypes.DEFAULT_
     """Shows details for a specific account, verifying and refreshing data live."""
     query = update.callback_query
     # We delay answering or show loading because we will do a network request
-    await query.answer("جاري جلب تفاصيل الحساب...")
+    try:
+        await query.answer("جاري جلب تفاصيل الحساب...")
+    except:
+        pass
     await query.edit_message_text("⏳ جاري الاتصال بخوادم آسياسيل لجلب أحدث البيانات...")
 
     phone = query.data.split("_")[1]
@@ -233,7 +271,7 @@ async def refresh_balance_handler(update: Update, context: ContextTypes.DEFAULT_
 async def delete_confirm_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Asks for deletion confirmation."""
     query = update.callback_query
-    await query.answer()
+    await _safe_answer(query)
     phone = query.data.split("_")[1]
 
     text = f"هل أنت متأكد من حذف الحساب `{phone}`؟"
@@ -249,7 +287,7 @@ async def delete_confirm_handler(update: Update, context: ContextTypes.DEFAULT_T
 async def delete_action_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Deletes the account."""
     query = update.callback_query
-    await query.answer()
+    await _safe_answer(query)
     phone = query.data.split("_")[1]
     user_id = query.from_user.id
 
@@ -266,7 +304,7 @@ async def delete_action_handler(update: Update, context: ContextTypes.DEFAULT_TY
 async def set_primary_receiver_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Sets the account as primary receiver."""
     query = update.callback_query
-    await query.answer()
+    await _safe_answer(query)
 
     phone = query.data.split("_")[1]
     user_id = query.from_user.id
@@ -308,7 +346,7 @@ async def start_recharge(update: Update, context: ContextTypes.DEFAULT_TYPE):
     reply_markup = InlineKeyboardMarkup(keyboard)
 
     if update.callback_query:
-        await update.callback_query.answer()
+        await _safe_answer(update.callback_query)
         await update.callback_query.edit_message_text(text, parse_mode="Markdown", reply_markup=reply_markup)
     else:
         await update.message.reply_text(text, parse_mode="Markdown", reply_markup=reply_markup)
@@ -317,11 +355,28 @@ async def start_recharge(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def recharge_input_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handles the card number input."""
     user_id = update.effective_user.id
+    db = DBManager()
+    sub = await db.get_user_subscription(user_id)
+
     text = ""
+    feature_type = "text"
 
     if update.message.text:
+        if sub['text_recharges_count'] >= sub['max_text_recharges']:
+             text = "❌ لقد وصلت للحد الأقصى المسموح به لشحن الكروت عبر النص في خطتك.\n\n"
+             text += await _get_plans_text(user_id)
+             keyboard = [[InlineKeyboardButton("🔙 رجوع", callback_data="main_menu")]]
+             await update.message.reply_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
+             return ConversationHandler.END
         text = update.message.text
     elif update.message.photo:
+        if sub['image_recharges_count'] >= sub['max_image_recharges']:
+             text = "❌ لقد وصلت للحد الأقصى المسموح به لشحن الكروت عبر الصور في خطتك.\n\n"
+             text += await _get_plans_text(user_id)
+             keyboard = [[InlineKeyboardButton("🔙 رجوع", callback_data="main_menu")]]
+             await update.message.reply_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
+             return ConversationHandler.END
+        feature_type = "image"
         await update.message.reply_text("⏳ جاري تحليل الصورة واستخراج الكود...")
         try:
             photo = update.message.photo[-1]
@@ -349,6 +404,12 @@ async def recharge_input_handler(update: Update, context: ContextTypes.DEFAULT_T
     try:
         recharge_manager = RechargeManager()
         result_message = await recharge_manager.process_smart_recharge(user_id, code)
+
+        # Only increment if it looks like a valid attempt (even if unconfirmed by balance)
+        # If it was an explicit failure like "invalid card", we still count it as a "use" of the feature?
+        # User request says "number of times using features", so yes.
+        await db.increment_usage(user_id, feature_type)
+
         await msg.edit_text(result_message, parse_mode="Markdown")
     except Exception as e:
         logger.exception(f"Recharge failed: {e}")
@@ -359,25 +420,9 @@ async def recharge_input_handler(update: Update, context: ContextTypes.DEFAULT_T
 async def show_plans_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Shows available subscription plans."""
     query = update.callback_query
-    await query.answer()
+    await _safe_answer(query)
 
-    db = DBManager()
-    plans = await db.get_plans()
-    user_sub = await db.get_user_subscription(query.from_user.id)
-
-    text = "💎 **الخطط المتاحة**\n\n"
-    text += f"خطة اشتراكك الحالية: **{user_sub['name']}**\n"
-    text += f"الحد الأقصى للحسابات: {user_sub['max_accounts']}\n\n"
-
-    for plan in plans:
-        text += f"🔹 **{plan['name']}**\n"
-        text += f"   💰 السعر: {plan['price']} IQD\n"
-        text += f"   🔢 عدد الحسابات: {plan['max_accounts']}\n"
-        if plan['description']:
-            text += f"   ℹ️ {plan['description']}\n"
-        text += "\n"
-
-    text += "للاشتراك يرجى التواصل مع الدعم."
+    text = await _get_plans_text(query.from_user.id)
     keyboard = [[InlineKeyboardButton("🔙 رجوع", callback_data="main_menu")]]
     await query.edit_message_text(text=text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
 
@@ -394,7 +439,14 @@ async def add_account_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     sub = await db.get_user_subscription(user_id)
     accounts = await db.get_user_accounts(user_id)
     if len(accounts) >= sub['max_accounts']:
-        await query.answer("❌ لقد تجاوزت الحد الأقصى للحسابات المسموح به في خطتك.", show_alert=True)
+        text = "❌ لقد تجاوزت الحد الأقصى للحسابات المسموح به في خطتك.\n\n"
+        text += await _get_plans_text(user_id)
+        keyboard = [[InlineKeyboardButton("🔙 رجوع", callback_data="main_menu")]]
+
+        if query:
+            await query.edit_message_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
+        else:
+            await update.message.reply_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
         return ConversationHandler.END
 
     text = "الرجاء إرسال رقم آسياسيل الخاص بك (077xxxxxxxx):"
@@ -402,7 +454,7 @@ async def add_account_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     reply_markup = InlineKeyboardMarkup(keyboard)
 
     if query:
-        await query.answer()
+        await _safe_answer(query)
         await query.edit_message_text(text, reply_markup=reply_markup)
     else:
         await update.message.reply_text(text, reply_markup=reply_markup)
@@ -513,7 +565,7 @@ async def cancel_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Cancels the conversation via callback button."""
     query = update.callback_query
     if query:
-        await query.answer()
+        await _safe_answer(query)
         # Return to main menu instead of just saying cancelled
         await start(update, context)
     return ConversationHandler.END

@@ -1,7 +1,7 @@
 import asyncio
 import logging
 from telegram import Update
-from telegram.ext import ApplicationBuilder, PicklePersistence
+from telegram.ext import ApplicationBuilder, PicklePersistence, ContextTypes
 from src.config import settings
 from src.bot.handlers import get_handlers
 from src.services.scheduler import SchedulerService
@@ -18,6 +18,20 @@ logging.basicConfig(
 logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("telegram").setLevel(logging.WARNING)
 logging.getLogger("apscheduler").setLevel(logging.WARNING)
+
+async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Log the error and handle specific telegram errors."""
+    logger.error(f"Exception while handling an update: {context.error}")
+
+    # Specific handling for callback query timeout
+    if "Query is too old" in str(context.error):
+        return
+
+    # Log full traceback for other errors
+    import traceback
+    tb_list = traceback.format_exception(None, context.error, context.error.__traceback__)
+    tb_string = "".join(tb_list)
+    logger.error(f"Traceback:\n{tb_string}")
 
 async def post_init(application):
     logger.info("Running post_init...")
@@ -40,6 +54,9 @@ def main():
         return
 
     application = ApplicationBuilder().token(settings.BOT_TOKEN).post_init(post_init).build()
+
+    # Add error handler
+    application.add_error_handler(error_handler)
 
     # Register all handlers
     for handler in get_handlers():
