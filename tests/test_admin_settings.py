@@ -36,13 +36,13 @@ async def test_update_plan(db_path):
     await db.init_db()
 
     # Add a plan
-    await db.add_plan("Old Plan", 1000, 1, "Desc", 30)
+    await db.add_plan("Old Plan", 1000, 1, 10, 5, "Desc", 30)
     plans = await db.get_plans()
     plan = next(p for p in plans if p['name'] == "Old Plan")
     pid = plan['id']
 
     # Update it
-    await db.update_plan(pid, "New Plan", 2000, 5, "New Desc", 60)
+    await db.update_plan(pid, "New Plan", 2000, 5, 20, 10, "New Desc", 60)
 
     plans = await db.get_plans()
     updated_plan = next(p for p in plans if p['id'] == pid)
@@ -57,12 +57,15 @@ async def test_get_user_subscription_fallback(db_path):
     db = DBManager(db_path=db_path)
     await db.init_db()
 
+    user_id = 999
+    await db.create_user_if_not_exists(user_id)
+
     # Seeded Free plan should be default
-    sub = await db.get_user_subscription(999)
+    sub = await db.get_user_subscription(user_id)
     assert sub['name'] == "Free"
 
     # Add another plan 'Pro'
-    await db.add_plan("Pro", 5000, 8, "Pro plan", 30)
+    await db.add_plan("Pro", 5000, 8, 100, 50, "Pro plan", 30)
 
     # Delete 'Free' plan (usually ID 1)
     await db.delete_plan(1)

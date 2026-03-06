@@ -314,11 +314,22 @@ async def start_recharge(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def recharge_input_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handles the card number input."""
     user_id = update.effective_user.id
+    db = DBManager()
+    sub = await db.get_user_subscription(user_id)
+
     text = ""
+    feature_type = "text"
 
     if update.message.text:
+        if sub['text_recharges_count'] >= sub['max_text_recharges']:
+             await update.message.reply_text("❌ لقد وصلت للحد الأقصى المسموح به لشحن الكروت عبر النص في خطتك.")
+             return ConversationHandler.END
         text = update.message.text
     elif update.message.photo:
+        if sub['image_recharges_count'] >= sub['max_image_recharges']:
+             await update.message.reply_text("❌ لقد وصلت للحد الأقصى المسموح به لشحن الكروت عبر الصور في خطتك.")
+             return ConversationHandler.END
+        feature_type = "image"
         await update.message.reply_text("⏳ جاري تحليل الصورة واستخراج الكود...")
         try:
             photo = update.message.photo[-1]
@@ -346,6 +357,12 @@ async def recharge_input_handler(update: Update, context: ContextTypes.DEFAULT_T
     try:
         recharge_manager = RechargeManager()
         result_message = await recharge_manager.process_smart_recharge(user_id, code)
+
+        # Only increment if it looks like a valid attempt (even if unconfirmed by balance)
+        # If it was an explicit failure like "invalid card", we still count it as a "use" of the feature?
+        # User request says "number of times using features", so yes.
+        await db.increment_usage(user_id, feature_type)
+
         await msg.edit_text(result_message, parse_mode="Markdown")
     except Exception as e:
         logger.exception(f"Recharge failed: {e}")

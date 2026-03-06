@@ -4,7 +4,7 @@ from src.config import settings
 from src.database.db_manager import DBManager
 
 # States for Add/Edit Plan Conversation
-PLAN_NAME, PLAN_PRICE, PLAN_ACCOUNTS, PLAN_DESC, PLAN_DURATION = range(5)
+PLAN_NAME, PLAN_PRICE, PLAN_ACCOUNTS, PLAN_MAX_TEXT, PLAN_MAX_IMAGE, PLAN_DESC, PLAN_DURATION = range(7)
 # States for Grant Plan Conversation
 GRANT_USER_ID, GRANT_PLAN_SELECT, GRANT_DURATION = range(3)
 # States for Settings Conversation
@@ -86,6 +86,8 @@ async def admin_user_details(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
     sub = await db.get_user_subscription(user_id)
     text += f"Plan: {sub.get('name', 'Free')} (Max: {sub.get('max_accounts')})\n"
+    text += f"Text Recharges: {sub.get('text_recharges_count', 0)}/{sub.get('max_text_recharges', 0)}\n"
+    text += f"Image Recharges: {sub.get('image_recharges_count', 0)}/{sub.get('max_image_recharges', 0)}\n"
     if user_data.get('plan_expiry'):
         text += f"Expiry: {user_data['plan_expiry']}\n"
 
@@ -115,6 +117,7 @@ async def admin_plans_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
     for plan in plans:
         text += f"🔹 **{plan['name']}** (ID: {plan['id']})\n"
         text += f"   Price: {plan['price']}, Max Accs: {plan['max_accounts']}\n"
+        text += f"   Max Text: {plan.get('max_text_recharges')}, Max Image: {plan.get('max_image_recharges')}\n"
         # Edit & Delete buttons
         keyboard.append([
             InlineKeyboardButton(f"✏️ Edit {plan['name']}", callback_data=f"admin_editplan_{plan['id']}"),
@@ -166,6 +169,24 @@ async def add_plan_accounts(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except ValueError:
         await update.message.reply_text("Invalid number. Enter max accounts:")
         return PLAN_ACCOUNTS
+    await update.message.reply_text("Enter Max Text Recharges allowed:")
+    return PLAN_MAX_TEXT
+
+async def add_plan_max_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    try:
+        context.user_data['p_max_text'] = int(update.message.text)
+    except ValueError:
+        await update.message.reply_text("Invalid number. Enter max text recharges:")
+        return PLAN_MAX_TEXT
+    await update.message.reply_text("Enter Max Image Recharges allowed:")
+    return PLAN_MAX_IMAGE
+
+async def add_plan_max_image(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    try:
+        context.user_data['p_max_image'] = int(update.message.text)
+    except ValueError:
+        await update.message.reply_text("Invalid number. Enter max image recharges:")
+        return PLAN_MAX_IMAGE
     await update.message.reply_text("Enter Plan Description:")
     return PLAN_DESC
 
@@ -186,6 +207,8 @@ async def add_plan_duration(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 context.user_data['p_name'],
                 context.user_data['p_price'],
                 context.user_data['p_accs'],
+                context.user_data['p_max_text'],
+                context.user_data['p_max_image'],
                 context.user_data['p_desc'],
                 duration
             )
@@ -195,6 +218,8 @@ async def add_plan_duration(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 context.user_data['p_name'],
                 context.user_data['p_price'],
                 context.user_data['p_accs'],
+                context.user_data['p_max_text'],
+                context.user_data['p_max_image'],
                 context.user_data['p_desc'],
                 duration
             )
@@ -222,6 +247,8 @@ async def edit_plan_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data['p_name'] = plan['name']
     context.user_data['p_price'] = plan['price']
     context.user_data['p_accs'] = plan['max_accounts']
+    context.user_data['p_max_text'] = plan.get('max_text_recharges', 10)
+    context.user_data['p_max_image'] = plan.get('max_image_recharges', 5)
     context.user_data['p_desc'] = plan['description']
 
     await query.message.reply_text(f"Editing Plan: {plan['name']}\nEnter New Name (current: {plan['name']}):")
@@ -336,6 +363,8 @@ def get_admin_handlers():
             PLAN_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_plan_name)],
             PLAN_PRICE: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_plan_price)],
             PLAN_ACCOUNTS: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_plan_accounts)],
+            PLAN_MAX_TEXT: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_plan_max_text)],
+            PLAN_MAX_IMAGE: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_plan_max_image)],
             PLAN_DESC: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_plan_desc)],
             PLAN_DURATION: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_plan_duration)],
         },

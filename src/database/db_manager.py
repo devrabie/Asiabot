@@ -43,6 +43,22 @@ class DBManager:
                 await db.execute("ALTER TABLE users ADD COLUMN plan_id INTEGER REFERENCES plans(id)")
                 await db.execute("ALTER TABLE users ADD COLUMN plan_expiry TIMESTAMP")
 
+            # Migration: Add recharge count columns to users
+            try:
+                await db.execute("SELECT text_recharges_count FROM users LIMIT 1")
+            except aiosqlite.OperationalError:
+                logger.info("Migrating database: Adding recharge count columns to users table.")
+                await db.execute("ALTER TABLE users ADD COLUMN text_recharges_count INTEGER DEFAULT 0")
+                await db.execute("ALTER TABLE users ADD COLUMN image_recharges_count INTEGER DEFAULT 0")
+
+            # Migration: Add max recharge columns to plans
+            try:
+                await db.execute("SELECT max_text_recharges FROM plans LIMIT 1")
+            except aiosqlite.OperationalError:
+                logger.info("Migrating database: Adding max recharge columns to plans table.")
+                await db.execute("ALTER TABLE plans ADD COLUMN max_text_recharges INTEGER DEFAULT 10")
+                await db.execute("ALTER TABLE plans ADD COLUMN max_image_recharges INTEGER DEFAULT 5")
+
             # Check if plans table exists (handled by executescript but let's be safe regarding initial setup)
             # No specific action needed if executescript runs, but adding default plan if table is empty is good
             try:
@@ -50,7 +66,10 @@ class DBManager:
                     count = await cursor.fetchone()
                     if count[0] == 0:
                         logger.info("Seeding default plan.")
-                        await db.execute("INSERT INTO plans (name, price, max_accounts, description) VALUES ('Free', 0, 1, 'Free plan')")
+                        await db.execute(
+                            "INSERT INTO plans (name, price, max_accounts, max_text_recharges, max_image_recharges, description) VALUES (?, ?, ?, ?, ?, ?)",
+                            ('Free', 0, 1, 10, 5, 'Free plan')
+                        )
             except Exception as e:
                 logger.error(f"Error seeding plans: {e}")
 
@@ -89,12 +108,15 @@ class DBManager:
             )
             await db.commit()
 
-    async def add_plan(self, name: str, price: float, max_accounts: int, description: str, duration_days: int):
+    async def add_plan(self, name: str, price: float, max_accounts: int, max_text: int, max_image: int, description: str, duration_days: int):
         """Add a new subscription plan."""
         async with aiosqlite.connect(self.db_path) as db:
             await db.execute(
-                "INSERT INTO plans (name, price, max_accounts, description, duration_days) VALUES (?, ?, ?, ?, ?)",
-                (name, price, max_accounts, description, duration_days)
+                """
+                INSERT INTO plans (name, price, max_accounts, max_text_recharges, max_image_recharges, description, duration_days)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (name, price, max_accounts, max_text, max_image, description, duration_days)
             )
             await db.commit()
 
@@ -106,16 +128,16 @@ class DBManager:
                 rows = await cursor.fetchall()
                 return [dict(row) for row in rows]
 
-    async def update_plan(self, plan_id: int, name: str, price: float, max_accounts: int, description: str, duration_days: int):
+    async def update_plan(self, plan_id: int, name: str, price: float, max_accounts: int, max_text: int, max_image: int, description: str, duration_days: int):
         """Update an existing plan."""
         async with aiosqlite.connect(self.db_path) as db:
             await db.execute(
                 """
                 UPDATE plans
-                SET name = ?, price = ?, max_accounts = ?, description = ?, duration_days = ?
+                SET name = ?, price = ?, max_accounts = ?, max_text_recharges = ?, max_image_recharges = ?, description = ?, duration_days = ?
                 WHERE id = ?
                 """,
-                (name, price, max_accounts, description, duration_days, plan_id)
+                (name, price, max_accounts, max_text, max_image, description, duration_days, plan_id)
             )
             await db.commit()
 
@@ -126,12 +148,16 @@ class DBManager:
             await db.commit()
 
     async def grant_subscription(self, user_id: int, plan_id: int, duration_days: int):
-        """Grant a subscription plan to a user."""
+        """Grant a subscription plan to a user and reset usage counts."""
         from datetime import timedelta
         expiry = datetime.now() + timedelta(days=duration_days)
         async with aiosqlite.connect(self.db_path) as db:
             await db.execute(
-                "UPDATE users SET plan_id = ?, plan_expiry = ? WHERE telegram_id = ?",
+                """
+                UPDATE users
+                SET plan_id = ?, plan_expiry = ?, text_recharges_count = 0, image_recharges_count = 0
+                WHERE telegram_id = ?
+                """,
                 (plan_id, expiry, user_id)
             )
             await db.commit()
@@ -141,33 +167,50 @@ class DBManager:
         async with aiosqlite.connect(self.db_path) as db:
             db.row_factory = aiosqlite.Row
             query = """
-                SELECT u.plan_id, u.plan_expiry, p.name, p.max_accounts
+                SELECT u.plan_id, u.plan_expiry, u.text_recharges_count, u.image_recharges_count,
+                       p.name, p.max_accounts, p.max_text_recharges, p.max_image_recharges
                 FROM users u
                 LEFT JOIN plans p ON u.plan_id = p.id
                 WHERE u.telegram_id = ?
             """
             async with db.execute(query, (user_id,)) as cursor:
                 row = await cursor.fetchone()
-                if row and row['plan_id']:
-                    # Check expiry
-                    expiry = None
-                    if row['plan_expiry']:
-                        try:
-                            expiry = datetime.fromisoformat(str(row['plan_expiry']))
-                        except:
-                            pass
+                if row:
+                    user_usage = {
+                        "text_recharges_count": row["text_recharges_count"] or 0,
+                        "image_recharges_count": row["image_recharges_count"] or 0
+                    }
 
-                    if expiry and expiry > datetime.now():
-                        return dict(row)
+                    if row['plan_id']:
+                        # Check expiry
+                        expiry = None
+                        if row['plan_expiry']:
+                            try:
+                                expiry = datetime.fromisoformat(str(row['plan_expiry']))
+                            except:
+                                pass
 
-                # Fallback: Try to find a plan named 'Free'
-                async with db.execute("SELECT name, max_accounts FROM plans WHERE name = 'Free' LIMIT 1") as fallback_cursor:
-                    fallback = await fallback_cursor.fetchone()
-                    if fallback:
-                        return dict(fallback)
+                        if expiry and expiry > datetime.now():
+                            return dict(row)
+
+                    # Fallback: Try to find a plan named 'Free'
+                    async with db.execute("SELECT name, max_accounts, max_text_recharges, max_image_recharges FROM plans WHERE name = 'Free' LIMIT 1") as fallback_cursor:
+                        fallback = await fallback_cursor.fetchone()
+                        if fallback:
+                            res = dict(fallback)
+                            res.update(user_usage)
+                            return res
 
                 # Ultimate fallback: No accounts allowed if no plan found/active
-                return {"name": "No active plan", "max_accounts": 0, "plan_id": None}
+                return {
+                    "name": "No active plan",
+                    "max_accounts": 0,
+                    "max_text_recharges": 0,
+                    "max_image_recharges": 0,
+                    "text_recharges_count": 0,
+                    "image_recharges_count": 0,
+                    "plan_id": None
+                }
 
     async def get_setting(self, key: str, default: str = "") -> str:
         """Get a setting value."""
@@ -182,6 +225,16 @@ class DBManager:
             await db.execute(
                 "INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)",
                 (key, value)
+            )
+            await db.commit()
+
+    async def increment_usage(self, user_id: int, feature_type: str):
+        """Increment usage count for a user feature."""
+        column = "text_recharges_count" if feature_type == "text" else "image_recharges_count"
+        async with aiosqlite.connect(self.db_path) as db:
+            await db.execute(
+                f"UPDATE users SET {column} = {column} + 1 WHERE telegram_id = ?",
+                (user_id,)
             )
             await db.commit()
 
