@@ -160,13 +160,14 @@ class DBManager:
                     if expiry and expiry > datetime.now():
                         return dict(row)
 
-                # Fallback to the first plan (usually 'Free' with ID 1)
-                async with db.execute("SELECT name, max_accounts FROM plans LIMIT 1") as fallback_cursor:
+                # Fallback: Try to find a plan named 'Free'
+                async with db.execute("SELECT name, max_accounts FROM plans WHERE name = 'Free' LIMIT 1") as fallback_cursor:
                     fallback = await fallback_cursor.fetchone()
                     if fallback:
                         return dict(fallback)
 
-                return {"name": "Free", "max_accounts": 1, "plan_id": None}
+                # Ultimate fallback: No accounts allowed if no plan found/active
+                return {"name": "No active plan", "max_accounts": 0, "plan_id": None}
 
     async def get_setting(self, key: str, default: str = "") -> str:
         """Get a setting value."""

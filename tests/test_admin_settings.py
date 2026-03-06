@@ -61,9 +61,13 @@ async def test_get_user_subscription_fallback(db_path):
     sub = await db.get_user_subscription(999)
     assert sub['name'] == "Free"
 
-    # Modify Free plan (id 1 usually)
-    await db.update_plan(1, "Modified Free", 0, 0, "No accounts", 30)
+    # Add another plan 'Pro'
+    await db.add_plan("Pro", 5000, 8, "Pro plan", 30)
 
+    # Delete 'Free' plan (usually ID 1)
+    await db.delete_plan(1)
+
+    # User should NOT fallback to 'Pro', should get 'No active plan'
     sub = await db.get_user_subscription(999)
-    assert sub['name'] == "Modified Free"
+    assert sub['name'] == "No active plan"
     assert sub['max_accounts'] == 0
