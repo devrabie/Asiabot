@@ -1,6 +1,6 @@
 import aiosqlite
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import List, Optional, Tuple
 from loguru import logger
 
@@ -149,7 +149,6 @@ class DBManager:
 
     async def grant_subscription(self, user_id: int, plan_id: int, duration_days: int):
         """Grant a subscription plan to a user and reset usage counts."""
-        from datetime import timedelta
         expiry = datetime.now() + timedelta(days=duration_days)
         async with aiosqlite.connect(self.db_path) as db:
             await db.execute(
@@ -396,3 +395,71 @@ class DBManager:
                 result.append(user_dict)
 
             return result
+
+    async def get_users_count(self) -> int:
+        """Get total number of users."""
+        async with aiosqlite.connect(self.db_path) as db:
+            async with db.execute("SELECT COUNT(*) FROM users") as cursor:
+                row = await cursor.fetchone()
+                return row[0] if row else 0
+
+    async def get_users_paginated(self, limit: int, offset: int) -> List[dict]:
+        """Get users with pagination."""
+        async with aiosqlite.connect(self.db_path) as db:
+            db.row_factory = aiosqlite.Row
+            async with db.execute("SELECT * FROM users LIMIT ? OFFSET ?", (limit, offset)) as cursor:
+                rows = await cursor.fetchall()
+                return [dict(row) for row in rows]
+
+    async def get_user_by_id(self, telegram_id: int) -> Optional[dict]:
+        """Fetch a specific user and their accounts."""
+        async with aiosqlite.connect(self.db_path) as db:
+            db.row_factory = aiosqlite.Row
+            async with db.execute("SELECT * FROM users WHERE telegram_id = ?", (telegram_id,)) as cursor:
+                user = await cursor.fetchone()
+                if not user:
+                    return None
+
+                user_dict = dict(user)
+                async with db.execute("SELECT * FROM accounts WHERE user_id = ?", (telegram_id,)) as acc_cursor:
+                    accounts = await acc_cursor.fetchall()
+                    user_dict['accounts'] = [dict(acc) for acc in accounts]
+                return user_dict
+
+    async def add_days_to_subscription(self, user_id: int, days: int):
+        """Add days to an existing subscription or set a new one if none exists."""
+        async with aiosqlite.connect(self.db_path) as db:
+            db.row_factory = aiosqlite.Row
+            async with db.execute("SELECT plan_expiry, plan_id FROM users WHERE telegram_id = ?", (user_id,)) as cursor:
+                row = await cursor.fetchone()
+                if not row:
+                    return
+
+                current_expiry = row['plan_expiry']
+                plan_id = row['plan_id']
+
+                # If no plan_id, we should probably assign 'Free' if it exists or keep it None
+                # But usually this is called when user already has a plan.
+
+                now = datetime.now()
+                if current_expiry:
+                    try:
+                        expiry_str = str(current_expiry)
+                        if ' ' in expiry_str and 'T' not in expiry_str:
+                            expiry = datetime.strptime(expiry_str.split('.')[0], "%Y-%m-%d %H:%M:%S")
+                        else:
+                            expiry = datetime.fromisoformat(expiry_str)
+
+                        # If already expired, start from now
+                        start_date = max(expiry, now)
+                    except:
+                        start_date = now
+                else:
+                    start_date = now
+
+                new_expiry = start_date + timedelta(days=days)
+                await db.execute(
+                    "UPDATE users SET plan_expiry = ? WHERE telegram_id = ?",
+                    (new_expiry, user_id)
+                )
+                await db.commit()

@@ -7,6 +7,8 @@ from src.database.db_manager import DBManager
 PLAN_NAME, PLAN_PRICE, PLAN_ACCOUNTS, PLAN_MAX_TEXT, PLAN_MAX_IMAGE, PLAN_DESC, PLAN_DURATION = range(7)
 # States for Grant Plan Conversation
 GRANT_USER_ID, GRANT_PLAN_SELECT, GRANT_DURATION = range(3)
+# States for Admin Search/Add Days
+ADMIN_SEARCH_ID, ADMIN_ADD_DAYS = range(8, 10)
 # States for Settings Conversation
 SETTING_VALUE = range(10, 11)
 
@@ -53,27 +55,50 @@ async def admin_dashboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(text, parse_mode="Markdown", reply_markup=reply_markup)
 
 async def admin_users_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """List all users."""
+    """List all users with pagination."""
     if not await check_admin(update): return
     query = update.callback_query
-    await _safe_answer(query, "Fetching users...")
+    await _safe_answer(query)
+
+    # Handle pagination
+    page = 1
+    if query and query.data.startswith("admin_users_page_"):
+        page = int(query.data.split("_")[3])
+
+    limit = 10
+    offset = (page - 1) * limit
 
     db = DBManager()
-    users = await db.get_all_users_with_accounts()
+    users = await db.get_users_paginated(limit, offset)
+    total_users = await db.get_users_count()
+    total_pages = (total_users + limit - 1) // limit
 
     if not users:
         await query.edit_message_text("No users found.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data="admin_menu")]]))
         return
 
-    # Basic pagination logic could be added here, for now list as buttons
     keyboard = []
+    # Search button at the top
+    keyboard.append([InlineKeyboardButton("🔍 Search User by ID", callback_data="admin_user_search_start")])
+
     for user in users:
         label = f"{user.get('first_name', 'NoName')} (@{user.get('username', 'None')})"
         keyboard.append([InlineKeyboardButton(label, callback_data=f"admin_user_{user['telegram_id']}")])
 
+    # Pagination buttons
+    nav_buttons = []
+    if page > 1:
+        nav_buttons.append(InlineKeyboardButton("⬅️ Previous", callback_data=f"admin_users_page_{page-1}"))
+    if page < total_pages:
+        nav_buttons.append(InlineKeyboardButton("Next ➡️", callback_data=f"admin_users_page_{page+1}"))
+
+    if nav_buttons:
+        keyboard.append(nav_buttons)
+
     keyboard.append([InlineKeyboardButton("🔙 Back", callback_data="admin_menu")])
 
-    await query.edit_message_text("👥 **Users List**\nClick for details:", parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
+    text = f"👥 **Users List** (Page {page}/{total_pages})\nTotal Users: {total_users}\nClick for details:"
+    await query.edit_message_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
 
 async def admin_user_details(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Show user details."""
@@ -83,10 +108,7 @@ async def admin_user_details(update: Update, context: ContextTypes.DEFAULT_TYPE)
     user_id = int(query.data.split("_")[2])
 
     db = DBManager()
-    # Re-fetch specific user data properly would be better, but we can iterate for now
-    # Or implement get_user_with_accounts in DB. For now, filter list.
-    users = await db.get_all_users_with_accounts()
-    user_data = next((u for u in users if u['telegram_id'] == user_id), None)
+    user_data = await db.get_user_by_id(user_id)
 
     if not user_data:
         await query.answer("User not found.")
@@ -112,7 +134,13 @@ async def admin_user_details(update: Update, context: ContextTypes.DEFAULT_TYPE)
     else:
         text += "No accounts linked."
 
-    keyboard = [[InlineKeyboardButton("🔙 Back to Users", callback_data="admin_users")]]
+    keyboard = [
+        [
+            InlineKeyboardButton("➕ Add Days", callback_data=f"admin_user_adddays_{user_id}"),
+            InlineKeyboardButton("🎁 Grant Plan", callback_data=f"admin_user_grant_{user_id}")
+        ],
+        [InlineKeyboardButton("🔙 Back to Users", callback_data="admin_users")]
+    ]
     await query.edit_message_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
 
 async def admin_plans_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -154,6 +182,94 @@ async def admin_delete_plan(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def admin_close(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.message.delete()
+
+# --- Admin User Search / Add Days ---
+
+async def admin_search_user_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await _safe_answer(query)
+    await query.message.reply_text("Enter User Telegram ID to search:")
+    return ADMIN_SEARCH_ID
+
+async def admin_search_user_result(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    try:
+        user_id = int(update.message.text.strip())
+        db = DBManager()
+        user_data = await db.get_user_by_id(user_id)
+        if not user_data:
+            await update.message.reply_text("❌ User not found.")
+            return ConversationHandler.END
+
+        # Display user details using existing logic but mock the query
+        # Actually better to just build the text here
+        text = f"👤 **User Details (Search)**\n"
+        text += f"ID: `{user_data['telegram_id']}`\n"
+        text += f"Name: {_escape_markdown(user_data.get('first_name', 'None'))}\n"
+        text += f"Username: @{_escape_markdown(user_data.get('username', 'None'))}\n"
+
+        sub = await db.get_user_subscription(user_id)
+        text += f"Plan: {sub.get('name', 'Free')} (Max: {sub.get('max_accounts')})\n"
+        text += f"Text Recharges: {sub.get('text_recharges_count', 0)}/{sub.get('max_text_recharges', 0)}\n"
+        text += f"Image Recharges: {sub.get('image_recharges_count', 0)}/{sub.get('max_image_recharges', 0)}\n"
+        if user_data.get('plan_expiry'):
+            text += f"Expiry: {user_data['plan_expiry']}\n"
+
+        keyboard = [
+            [
+                InlineKeyboardButton("➕ Add Days", callback_data=f"admin_user_adddays_{user_id}"),
+                InlineKeyboardButton("🎁 Grant Plan", callback_data=f"admin_user_grant_{user_id}")
+            ],
+            [InlineKeyboardButton("🔙 Back to Users", callback_data="admin_users")]
+        ]
+        await update.message.reply_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
+        return ConversationHandler.END
+    except ValueError:
+        await update.message.reply_text("Invalid ID. Enter a number:")
+        return ADMIN_SEARCH_ID
+
+async def admin_add_days_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await _safe_answer(query)
+    user_id = int(query.data.split("_")[3])
+    context.user_data['target_user_id'] = user_id
+    await query.message.reply_text(f"Enter number of days to add to user {user_id}:")
+    return ADMIN_ADD_DAYS
+
+async def admin_add_days_action(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    try:
+        days = int(update.message.text.strip())
+        user_id = context.user_data.get('target_user_id')
+        if user_id:
+            db = DBManager()
+            await db.add_days_to_subscription(user_id, days)
+            await update.message.reply_text(f"✅ Added {days} days to user {user_id}.")
+    except ValueError:
+        await update.message.reply_text("Invalid number of days.")
+
+    context.user_data.clear()
+    return ConversationHandler.END
+
+async def admin_user_grant_redirect(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Redirects to grant plan flow for a specific user."""
+    query = update.callback_query
+    await _safe_answer(query)
+    user_id = int(query.data.split("_")[3])
+
+    # Simulate the start of grant plan flow but with pre-filled ID
+    context.user_data['g_uid'] = user_id
+
+    db = DBManager()
+    plans = await db.get_plans()
+    if not plans:
+        await query.message.reply_text("No plans available.")
+        return ConversationHandler.END
+
+    keyboard = []
+    for p in plans:
+        keyboard.append([InlineKeyboardButton(f"{p['name']} ({p['duration_days']} days)", callback_data=str(p['id']))])
+
+    await query.message.reply_text(f"Select a Plan for user {user_id}:", reply_markup=InlineKeyboardMarkup(keyboard))
+    return GRANT_PLAN_SELECT
 
 # --- Add Plan Conversation ---
 async def add_plan_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -402,13 +518,30 @@ def get_admin_handlers():
         fallbacks=[CommandHandler("cancel", cancel_admin)]
     )
 
+    admin_user_actions_conv = ConversationHandler(
+        entry_points=[
+            CallbackQueryHandler(admin_search_user_start, pattern="^admin_user_search_start$"),
+            CallbackQueryHandler(admin_add_days_start, pattern="^admin_user_adddays_"),
+            CallbackQueryHandler(admin_user_grant_redirect, pattern="^admin_user_grant_")
+        ],
+        states={
+            ADMIN_SEARCH_ID: [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_search_user_result)],
+            ADMIN_ADD_DAYS: [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_add_days_action)],
+            GRANT_PLAN_SELECT: [CallbackQueryHandler(grant_plan_select)],
+            GRANT_DURATION: [MessageHandler(filters.TEXT & ~filters.COMMAND, grant_duration)],
+        },
+        fallbacks=[CommandHandler("cancel", cancel_admin)]
+    )
+
     return [
         add_plan_conv,
         grant_plan_conv,
         settings_conv,
+        admin_user_actions_conv,
         CallbackQueryHandler(admin_dashboard, pattern="^admin_menu$"),
         CallbackQueryHandler(admin_settings_menu, pattern="^admin_settings$"),
         CallbackQueryHandler(admin_users_list, pattern="^admin_users$"),
+        CallbackQueryHandler(admin_users_list, pattern="^admin_users_page_"),
         CallbackQueryHandler(admin_user_details, pattern="^admin_user_"),
         CallbackQueryHandler(admin_plans_list, pattern="^admin_plans$"),
         CallbackQueryHandler(admin_delete_plan, pattern="^admin_delplan_"),
