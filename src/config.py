@@ -5,6 +5,7 @@ class Settings(BaseSettings):
     BOT_TOKEN: str
     REDIS_URL: Optional[str] = None
     ADMIN_ID: Optional[int] = None
+    TELEGRAM_API_URL: Optional[str] = None
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
 
