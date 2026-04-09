@@ -53,7 +53,16 @@ def main():
         logger.error("BOT_TOKEN not found in environment variables.")
         return
 
-    application = ApplicationBuilder().token(settings.BOT_TOKEN).post_init(post_init).build()
+    builder = ApplicationBuilder().token(settings.BOT_TOKEN).post_init(post_init)
+
+    if settings.TELEGRAM_API_URL:
+        logger.info(f"Using custom Telegram API URL: {settings.TELEGRAM_API_URL}")
+        builder.base_url(settings.TELEGRAM_API_URL)
+        # If it's a local server, we might want to enable local_mode as well
+        if "localhost" in settings.TELEGRAM_API_URL or "127.0.0.1" in settings.TELEGRAM_API_URL:
+            builder.local_mode(True)
+
+    application = builder.build()
 
     # Add error handler
     application.add_error_handler(error_handler)

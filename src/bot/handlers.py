@@ -62,18 +62,30 @@ def _escape_markdown(text: str) -> str:
     if not text: return ""
     return str(text).replace("_", "\\_").replace("*", "\\*")
 
-async def _get_plans_text(user_id: int) -> str:
-    """Helper to generate the plans and subscription status text."""
+async def _get_user_status_text(user_id: int) -> str:
+    """Helper to generate only the current subscription status text."""
     db = DBManager()
-    plans = await db.get_plans()
     user_sub = await db.get_user_subscription(user_id)
 
-    text = "💎 **الخطط المتاحة**\n\n"
-    text += f"خطة اشتراكك الحالية: **{_escape_markdown(user_sub['name'])}**\n"
-    text += f"الحد الأقصى للحسابات: `{user_sub['max_accounts']}`\n"
-    text += f"شحن كروت (نص): `{user_sub.get('text_recharges_count', 0)}/{user_sub.get('max_text_recharges', 0)}`\n"
-    text += f"شحن كروت (صور): `{user_sub.get('image_recharges_count', 0)}/{user_sub.get('max_image_recharges', 0)}`\n\n"
+    text = "📊 **حالة اشتراكك الحالية**\n\n"
+    text += f"الخطة: **{_escape_markdown(user_sub['name'])}**\n"
+    text += f"🔢 عدد الحسابات: `{user_sub['max_accounts']}`\n"
+    text += f"📝 شحن نصي: `{user_sub.get('text_recharges_count', 0)}/{user_sub.get('max_text_recharges', 0)}`\n"
+    text += f"📸 شحن صوري: `{user_sub.get('image_recharges_count', 0)}/{user_sub.get('max_image_recharges', 0)}`\n"
 
+    # Add expiry if available
+    user_data = await db.get_user_by_id(user_id)
+    if user_data and user_data.get('plan_expiry'):
+        text += f"📅 تاريخ الانتهاء: `{user_data['plan_expiry']}`\n"
+
+    return text
+
+async def _get_available_plans_text() -> str:
+    """Helper to generate the list of available plans."""
+    db = DBManager()
+    plans = await db.get_plans()
+
+    text = "💎 **الخطط المتاحة**\n\n"
     for plan in plans:
         text += f"🔹 **{_escape_markdown(plan['name'])}**\n"
         text += f"   💰 السعر: `{plan['price']} IQD`\n"
@@ -364,7 +376,7 @@ async def recharge_input_handler(update: Update, context: ContextTypes.DEFAULT_T
     if update.message.text:
         if sub['text_recharges_count'] >= sub['max_text_recharges']:
              text = "❌ لقد وصلت للحد الأقصى المسموح به لشحن الكروت عبر النص في خطتك.\n\n"
-             text += await _get_plans_text(user_id)
+             text += await _get_user_status_text(user_id)
              keyboard = [[InlineKeyboardButton("🔙 رجوع", callback_data="main_menu")]]
              await update.message.reply_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
              return ConversationHandler.END
@@ -372,7 +384,7 @@ async def recharge_input_handler(update: Update, context: ContextTypes.DEFAULT_T
     elif update.message.photo:
         if sub['image_recharges_count'] >= sub['max_image_recharges']:
              text = "❌ لقد وصلت للحد الأقصى المسموح به لشحن الكروت عبر الصور في خطتك.\n\n"
-             text += await _get_plans_text(user_id)
+             text += await _get_user_status_text(user_id)
              keyboard = [[InlineKeyboardButton("🔙 رجوع", callback_data="main_menu")]]
              await update.message.reply_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
              return ConversationHandler.END
@@ -418,13 +430,17 @@ async def recharge_input_handler(update: Update, context: ContextTypes.DEFAULT_T
     return ConversationHandler.END
 
 async def show_plans_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Shows available subscription plans."""
+    """Shows available subscription plans and user status."""
     query = update.callback_query
     await _safe_answer(query)
+    user_id = query.from_user.id
 
-    text = await _get_plans_text(query.from_user.id)
+    status_text = await _get_user_status_text(user_id)
+    plans_text = await _get_available_plans_text()
+
+    full_text = f"{status_text}\n\n{plans_text}"
     keyboard = [[InlineKeyboardButton("🔙 رجوع", callback_data="main_menu")]]
-    await query.edit_message_text(text=text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
+    await query.edit_message_text(text=full_text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
 
 # --- Add Account Conversation ---
 
@@ -440,7 +456,7 @@ async def add_account_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     accounts = await db.get_user_accounts(user_id)
     if len(accounts) >= sub['max_accounts']:
         text = "❌ لقد تجاوزت الحد الأقصى للحسابات المسموح به في خطتك.\n\n"
-        text += await _get_plans_text(user_id)
+        text += await _get_user_status_text(user_id)
         keyboard = [[InlineKeyboardButton("🔙 رجوع", callback_data="main_menu")]]
 
         if query:
