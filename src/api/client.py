@@ -275,13 +275,20 @@ class AsiacellClient:
         async with aiohttp.ClientSession() as session:
             try:
                 async with session.post(url, json={"url": image_url}, headers=headers, timeout=30) as response:
-                    response.raise_for_status()
-                    data = await response.json()
-                    # Response format from PHP example: {'status': true/false, 'text': '...', 'message': '...'}
-                    if data.get("status") is False:
-                        logger.warning(f"OCR service returned error: {data.get('message')}")
+                    data = {}
+                    try:
+                        data = await response.json()
+                    except Exception:
+                        pass
+
+                    if response.status == 200:
+                        if data.get("status") is False or data.get("status") == "error":
+                            logger.warning(f"OCR service returned error: {data.get('message') or data.get('detail')}")
+                            return ""
+                        return data.get("text", "")
+                    else:
+                        logger.warning(f"OCR service returned HTTP {response.status}: {data.get('detail', data)}")
                         return ""
-                    return data.get("text", "")
             except Exception as e:
                 logger.error(f"OCR request failed: {e}")
                 return ""
