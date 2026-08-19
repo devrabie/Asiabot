@@ -1,21 +1,36 @@
 import pytest
 from unittest.mock import AsyncMock, patch, MagicMock
-from src.bot.handlers import _get_plans_text, show_plans_handler, add_account_start
+from src.bot.handlers import _get_user_status_text, _get_available_plans_text, show_plans_handler, add_account_start
 from telegram import Update, Message, CallbackQuery, User
 
 @pytest.mark.asyncio
-async def test_get_plans_text():
+async def test_get_user_status_text():
     # Mock DBManager
     with patch("src.bot.handlers.DBManager") as MockDB:
         db_instance = MockDB.return_value
-        db_instance.get_plans = AsyncMock(return_value=[{"name": "Free", "price": 0, "max_accounts": 1, "description": "Free plan", "max_text_recharges": 10, "max_image_recharges": 5}])
-        db_instance.get_user_subscription = AsyncMock(return_value={"name": "Free", "max_accounts": 1, "text_recharges_count": 0, "max_text_recharges": 10, "image_recharges_count": 0, "max_image_recharges": 5})
+        db_instance.get_user_subscription = AsyncMock(return_value={
+            "name": "Free", "max_accounts": 1, "text_recharges_count": 0, "max_text_recharges": 10, "image_recharges_count": 0, "max_image_recharges": 5
+        })
+        db_instance.get_user_by_id = AsyncMock(return_value={"plan_expiry": None})
+
+        text = await _get_user_status_text(123)
+
+        assert "حالة اشتراكك الحالية" in text
+        assert "Free" in text
+        assert "`1`" in text
+
+@pytest.mark.asyncio
+async def test_get_available_plans_text():
+    with patch("src.bot.handlers.DBManager") as MockDB:
+        db_instance = MockDB.return_value
+        db_instance.get_plans = AsyncMock(return_value=[
+            {"name": "Free", "price": 0, "max_accounts": 1, "description": "Free plan", "max_text_recharges": 10, "max_image_recharges": 5}
+        ])
         db_instance.get_setting = AsyncMock(return_value="Support: @Dev")
 
-        text = await _get_plans_text(123)
+        text = await _get_available_plans_text()
 
         assert "💎 **الخطط المتاحة**" in text
-        assert "خطة اشتراكك الحالية: **Free**" in text
         assert "Support: @Dev" in text
         assert "📝 شحن نصي: `10`" in text
 
@@ -30,19 +45,18 @@ async def test_add_account_start_limit_reached():
     context = MagicMock()
 
     with patch("src.bot.handlers.DBManager") as MockDB, \
-         patch("src.bot.handlers._get_plans_text", new_callable=AsyncMock) as mock_get_plans:
+         patch("src.bot.handlers._get_user_status_text", new_callable=AsyncMock) as mock_get_status:
 
         db_instance = MockDB.return_value
         # Mock limit reached
         db_instance.get_user_subscription = AsyncMock(return_value={"max_accounts": 1})
         db_instance.get_user_accounts = AsyncMock(return_value=[{"phone": "0770"}]) # 1 account exists
-        mock_get_plans.return_value = "PLANS_LIST"
+        mock_get_status.return_value = "STATUS_TEXT"
 
         from src.bot.handlers import add_account_start, ConversationHandler
         res = await add_account_start(update, context)
 
         assert res == ConversationHandler.END
-        # Should have edited message with plans instead of alert
         args, kwargs = update.callback_query.edit_message_text.call_args
         assert "❌ لقد تجاوزت الحد الأقصى للحسابات المسموح به في خطتك." in args[0]
-        assert "PLANS_LIST" in args[0]
+        assert "STATUS_TEXT" in args[0]

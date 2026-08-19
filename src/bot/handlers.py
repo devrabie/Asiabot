@@ -393,8 +393,15 @@ async def recharge_input_handler(update: Update, context: ContextTypes.DEFAULT_T
         try:
             photo = update.message.photo[-1]
             file = await context.bot.get_file(photo.file_id)
+            image_url = file.file_path
+            if image_url and not image_url.startswith(("http://", "https://")):
+                base_url = "https://api.telegram.org"
+                if hasattr(context.bot, "base_url") and context.bot.base_url:
+                    base_url = str(context.bot.base_url).rstrip("/")
+                image_url = f"{base_url}/file/bot{context.bot.token}/{image_url.lstrip('/')}"
+
             async with AsiacellClient() as client:
-                text = await client.extract_text_from_image_url(file.file_path)
+                text = await client.extract_text_from_image_url(image_url)
         except Exception as e:
             logger.error(f"Failed to process photo: {e}")
             await update.message.reply_text("❌ حدث خطأ أثناء معالجة الصورة.")
@@ -406,6 +413,10 @@ async def recharge_input_handler(update: Update, context: ContextTypes.DEFAULT_T
 
     # Extract code using robust logic
     code = extract_card_number(text)
+
+    # Secondary fallback to caption if OCR returned text but no valid card code was extracted
+    if not code and update.message.caption:
+        code = extract_card_number(update.message.caption)
 
     if not code:
         await update.message.reply_text("❌ لم يتم العثور على كود صالح. يرجى إرسال كود يتكون من 14 أو 15 رقم.")
