@@ -391,17 +391,29 @@ async def recharge_input_handler(update: Update, context: ContextTypes.DEFAULT_T
         feature_type = "image"
         await update.message.reply_text("⏳ جاري تحليل الصورة واستخراج الكود...")
         try:
-            photo = update.message.photo[-1]
-            file = await context.bot.get_file(photo.file_id)
-            image_url = file.file_path
-            if image_url and not image_url.startswith(("http://", "https://")):
-                base_url = "https://api.telegram.org"
-                if hasattr(context.bot, "base_url") and context.bot.base_url:
-                    base_url = str(context.bot.base_url).rstrip("/")
-                image_url = f"{base_url}/file/bot{context.bot.token}/{image_url.lstrip('/')}"
+            # Try photos from largest to smallest candidate resolutions
+            photos = update.message.photo
+            photo_candidates = list(reversed(photos))
 
+            best_extracted = ""
             async with AsiacellClient() as client:
-                text = await client.extract_text_from_image_url(image_url)
+                for photo in photo_candidates:
+                    file = await context.bot.get_file(photo.file_id)
+                    image_url = file.file_path
+                    if image_url and not image_url.startswith(("http://", "https://")):
+                        base_url = "https://api.telegram.org"
+                        if hasattr(context.bot, "base_url") and context.bot.base_url:
+                            base_url = str(context.bot.base_url).rstrip("/")
+                        image_url = f"{base_url}/file/bot{context.bot.token}/{image_url.lstrip('/')}"
+
+                    extracted = await client.extract_text_from_image_url(image_url)
+                    if extracted and extract_card_number(extracted):
+                        best_extracted = extracted
+                        break
+                    elif extracted and not best_extracted:
+                        best_extracted = extracted
+
+            text = best_extracted
         except Exception as e:
             logger.error(f"Failed to process photo: {e}")
             await update.message.reply_text("❌ حدث خطأ أثناء معالجة الصورة.")
