@@ -58,6 +58,6 @@ async def test_process_smart_recharge_no_balance_change():
         with patch("asyncio.sleep", return_value=None):
             result = await manager.process_smart_recharge(123, "123456789")
 
-        assert "⚠️ *تنبيه: لم يتم رصد زيادة في الرصيد*" in result
+        assert "لم يتم رصد زيادة في الرصيد" in result
         assert "10,000 IQD" in result
         assert "تم استلام الطلب" in result

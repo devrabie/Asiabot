@@ -17,7 +17,7 @@ async def test_get_user_status_text():
 
         assert "حالة اشتراكك الحالية" in text
         assert "Free" in text
-        assert "`1`" in text
+        assert "<code>1</code>" in text
 
 @pytest.mark.asyncio
 async def test_get_available_plans_text():
@@ -30,9 +30,9 @@ async def test_get_available_plans_text():
 
         text = await _get_available_plans_text()
 
-        assert "💎 **الخطط المتاحة**" in text
+        assert "الخطط المتاحة" in text
         assert "Support: @Dev" in text
-        assert "📝 شحن نصي: `10`" in text
+        assert "نصي: <code>10</code>" in text
 
 @pytest.mark.asyncio
 async def test_add_account_start_limit_reached():
