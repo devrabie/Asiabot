@@ -3,6 +3,17 @@ from typing import Optional, List
 from loguru import logger
 from src.database.db_manager import DBManager
 from src.api.client import AsiacellClient
+from src.bot.ui_helpers import (
+    E_BOLT,
+    E_CARD,
+    E_ERROR,
+    E_GROWTH,
+    E_SUCCESS,
+    E_USER,
+    E_WARN,
+    build_card,
+    esc,
+)
 
 class RechargeManager:
     def __init__(self):
@@ -146,25 +157,27 @@ class RechargeManager:
                         diff = (new_balance or 0.0) - initial_balance
 
                     if diff > 0:
-                        return (
-                            f"✅ *تم شحن الرصيد بنجاح!*\n\n"
-                            f"💰 المبلغ المضاف: `{diff:,.0f} IQD`\n"
-                            f"📉 الرصيد السابق: `{initial_balance:,.0f} IQD`\n"
-                            f"📈 الرصيد الحالي: `{new_balance:,.0f} IQD`\n\n"
-                            f"📱 المستلم: `{target_number}`\n"
-                            f"💳 المرسل: `{sender_number}`\n"
-                            f"🔢 الكرت: `{voucher_code}`"
+                        return build_card(
+                            f"{E_SUCCESS} تم شحن الرصيد بنجاح",
+                            [
+                                f"{E_BOLT} <b>المبلغ المضاف:</b> <code>+{diff:,.0f} IQD</code>",
+                                f"{E_GROWTH} <b>الرصيد السابق:</b> <code>{initial_balance:,.0f} IQD</code>",
+                                f"{E_GROWTH} <b>الرصيد الحالي:</b> <code>{new_balance:,.0f} IQD</code>",
+                                "",
+                                f"{E_USER} <b>المستلم:</b> <code>{esc(target_number)}</code>",
+                                f"{E_USER} <b>المرسل:</b> <code>{esc(sender_number)}</code>",
+                                f"{E_CARD} <b>الكرت:</b> <code>{esc(voucher_code)}</code>",
+                            ],
                         )
                     else:
-                        # Success response but balance didn't change
-                        # Include API message if available to explain why
-                        msg_part = f"\n*رسالة الشركة:* {api_message}" if api_message else ""
-                        return (
-                            f"⚠️ *تنبيه: لم يتم رصد زيادة في الرصيد*\n\n"
-                            f"تم إرسال طلب الشحن، ولكن الرصيد لم يتغير.\n"
-                            f"الرصيد الحالي: `{initial_balance:,.0f} IQD`"
-                            f"{msg_part}\n\n"
-                            f"يرجى التحقق من صحة الكرت أو المحاولة لاحقاً."
+                        msg_part = f"\n<b>رسالة الشركة:</b> {esc(api_message)}" if api_message else ""
+                        return build_card(
+                            f"{E_WARN} لم يتم رصد زيادة في الرصيد",
+                            [
+                                "تم إرسال طلب الشحن، ولكن الرصيد لم يتغير.",
+                                f"{E_GROWTH} <b>الرصيد الحالي:</b> <code>{initial_balance:,.0f} IQD</code>{msg_part}",
+                                "يرجى التحقق من صحة الكرت أو المحاولة لاحقاً.",
+                            ],
                         )
 
                 except Exception as e:
@@ -193,10 +206,14 @@ class RechargeManager:
                                 new_balance = await self._get_balance_safe(client, target_account)
                                 diff = (new_balance or 0) - initial_balance
                                 if diff > 0:
-                                     return (
-                                        f"✅ *تم شحن الرصيد بنجاح!* (بعد تحديث التوكن)\n\n"
-                                        f"💰 المبلغ المضاف: `{diff:,.0f} IQD`\n"
-                                        f"📈 الرصيد الحالي: `{new_balance:,.0f} IQD`"
+                                    return build_card(
+                                        f"{E_SUCCESS} تم شحن الرصيد بنجاح",
+                                        [
+                                            f"{E_BOLT} <b>المبلغ المضاف:</b> <code>+{diff:,.0f} IQD</code>",
+                                            f"{E_GROWTH} <b>الرصيد الحالي:</b> <code>{new_balance:,.0f} IQD</code>",
+                                            f"{E_CARD} <b>الكرت:</b> <code>{esc(voucher_code)}</code>",
+                                        ],
+                                        footer="تم تحديث الجلسة تلقائياً وإتمام الشحن",
                                     )
                             except Exception as retry_e:
                                 logger.error(f"Retry failed for {sender_number}: {retry_e}")
@@ -212,9 +229,9 @@ class RechargeManager:
 
                     # If specific voucher error, abort
                     if "voucher" in err_msg and ("invalid" in err_msg or "used" in err_msg):
-                        return f"❌ خطأ: الكرت غير صالح أو مستخدم."
+                        return f"{E_ERROR} <b>خطأ:</b> الكرت غير صالح أو مستخدم مسبقاً."
 
                     logger.error(f"Recharge failed with {sender_number}: {e}")
                     continue
 
-        return f"❌ فشلت عملية الشحن. تم تجربة {len(tried_senders)} حسابات."
+        return f"{E_ERROR} <b>فشلت عملية الشحن</b> بعد تجربة {len(tried_senders)} حسابات."
