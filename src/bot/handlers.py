@@ -13,6 +13,7 @@ from loguru import logger
 from src.api.client import AsiacellClient
 from src.database.db_manager import DBManager
 from src.services.recharge_manager import RechargeManager
+from src.services.ocr_service import download_telegram_photo_bytes, extract_card_from_image_bytes
 from src.utils.card_parser import extract_card_number
 from src.bot.admin_handlers import admin_dashboard, get_admin_handlers
 import aiohttp
@@ -372,6 +373,8 @@ async def recharge_input_handler(update: Update, context: ContextTypes.DEFAULT_T
 
     text = ""
     feature_type = "text"
+    code = None
+    status_msg = None
 
     if update.message.text:
         if sub['text_recharges_count'] >= sub['max_text_recharges']:
@@ -389,34 +392,14 @@ async def recharge_input_handler(update: Update, context: ContextTypes.DEFAULT_T
              await update.message.reply_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
              return ConversationHandler.END
         feature_type = "image"
-        await update.message.reply_text("⏳ جاري تحليل الصورة واستخراج الكود...")
+        status_msg = await update.message.reply_text("⏳ جاري تحليل الصورة واستخراج الكود...")
         try:
-            # Try photos from largest to smallest candidate resolutions
-            photos = update.message.photo
-            photo_candidates = list(reversed(photos))
-
-            best_extracted = ""
-            async with AsiacellClient() as client:
-                for photo in photo_candidates:
-                    file = await context.bot.get_file(photo.file_id)
-                    image_url = file.file_path
-                    if image_url and not image_url.startswith(("http://", "https://")):
-                        base_url = "https://api.telegram.org"
-                        if hasattr(context.bot, "base_url") and context.bot.base_url:
-                            base_url = str(context.bot.base_url).rstrip("/")
-                        image_url = f"{base_url}/file/bot{context.bot.token}/{image_url.lstrip('/')}"
-
-                    extracted = await client.extract_text_from_image_url(image_url)
-                    if extracted and extract_card_number(extracted):
-                        best_extracted = extracted
-                        break
-                    elif extracted and not best_extracted:
-                        best_extracted = extracted
-
-            text = best_extracted
+            largest_photo = update.message.photo[-1]
+            image_bytes = await download_telegram_photo_bytes(context.bot, largest_photo.file_id)
+            code, text = await extract_card_from_image_bytes(image_bytes)
         except Exception as e:
             logger.error(f"Failed to process photo: {e}")
-            await update.message.reply_text("❌ حدث خطأ أثناء معالجة الصورة.")
+            await status_msg.edit_text("❌ حدث خطأ أثناء معالجة الصورة.")
             return RECHARGE_INPUT
 
     # Fallback to caption if available and OCR didn't find anything (or it wasn't a photo)
@@ -424,17 +407,25 @@ async def recharge_input_handler(update: Update, context: ContextTypes.DEFAULT_T
         text = update.message.caption
 
     # Extract code using robust logic
-    code = extract_card_number(text)
+    if not code:
+        code = extract_card_number(text)
 
     # Secondary fallback to caption if OCR returned text but no valid card code was extracted
     if not code and update.message.caption:
         code = extract_card_number(update.message.caption)
 
     if not code:
-        await update.message.reply_text("❌ لم يتم العثور على كود صالح. يرجى إرسال كود يتكون من 14 أو 15 رقم.")
+        err_text = "❌ لم يتم العثور على كود صالح. يرجى إرسال كود يتكون من 14 أو 15 رقم."
+        if status_msg:
+            await status_msg.edit_text(err_text)
+        else:
+            await update.message.reply_text(err_text)
         return RECHARGE_INPUT
 
-    msg = await update.message.reply_text(f"🔄 جاري معالجة الكود: `{code}` ...", parse_mode="Markdown")
+    if status_msg:
+        msg = await status_msg.edit_text(f"🔄 جاري معالجة الكود: `{code}` ...", parse_mode="Markdown")
+    else:
+        msg = await update.message.reply_text(f"🔄 جاري معالجة الكود: `{code}` ...", parse_mode="Markdown")
 
     try:
         recharge_manager = RechargeManager()
@@ -671,5 +662,7 @@ def get_handlers():
         add_account_conv,
         recharge_conv,
         CommandHandler("start", start),
-        CommandHandler("admin", admin_dashboard)
-    ] + admin_handlers + callback_handlers
+        CommandHandler("admin", admin_dashboard),
+    ] + admin_handlers + callback_handlers + [
+        MessageHandler(filters.PHOTO, recharge_input_handler),
+    ]

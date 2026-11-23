@@ -6,3 +6,5 @@ loguru
 aiosqlite
 pydantic-settings
 APScheduler
+pytesseract
+Pillow
