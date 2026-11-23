@@ -6,7 +6,9 @@ import pytest
 from PIL import Image
 
 from src.services.ocr_service import (
+    _parse_ocr_space_response,
     _resolve_file_download_url,
+    _resolve_local_file_path,
     extract_card_from_image_bytes,
 )
 
@@ -55,3 +57,33 @@ async def test_extract_card_from_image_bytes_falls_back_to_second_pass():
         code, _ = await extract_card_from_image_bytes(png_bytes)
         assert code == "98765432109876"
         assert mock_ocr.call_count == 2
+
+
+def test_resolve_local_file_path_maps_container_volume(tmp_path, monkeypatch):
+    sample = tmp_path / "123:ABC" / "photos" / "file_1.jpg"
+    sample.parent.mkdir(parents=True)
+    sample.write_bytes(b"img")
+
+    monkeypatch.setattr("src.services.ocr_service.LOCAL_BOT_API_HOST_PREFIX", str(tmp_path) + "/")
+    resolved = _resolve_local_file_path("/var/lib/telegram-bot-api/123:ABC/photos/file_1.jpg")
+    assert resolved == str(sample)
+
+
+def test_parse_ocr_space_response():
+    payload = {
+        "IsErroredOnProcessing": False,
+        "ParsedResults": [{"ParsedText": "Serial: 10349991847\n010919999260348"}],
+    }
+    assert "010919999260348" in _parse_ocr_space_response(payload)
+
+
+@pytest.mark.asyncio
+async def test_extract_card_prefers_ocr_space_over_tesseract():
+    png_bytes = _make_dummy_png_bytes()
+    with patch("src.services.ocr_service._extract_via_ocr_space", return_value="010919999260348"), patch(
+        "src.services.ocr_service.pytesseract.image_to_string"
+    ) as mock_tess:
+        code, raw = await extract_card_from_image_bytes(png_bytes)
+        assert code == "010919999260348"
+        assert raw == "010919999260348"
+        mock_tess.assert_not_called()

@@ -6,6 +6,8 @@ class Settings(BaseSettings):
     REDIS_URL: Optional[str] = None
     ADMIN_ID: Optional[int] = None
     TELEGRAM_API_URL: Optional[str] = None
+    OCR_SPACE_API_KEY: Optional[str] = None
+    OCR_SPACE_TIMEOUT_SECONDS: int = 10
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
 
