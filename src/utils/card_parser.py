@@ -1,39 +1,62 @@
 import re
 
+ARABIC_TO_ASCII = str.maketrans('٠١٢٣٤٥٦٧٨٩۰۱۲۳۴۵۶۷۸۹', '01234567890123456789')
+
+def normalize_text(text: str) -> str:
+    """Converts Eastern Arabic and Perso-Arabic digits to ASCII digits."""
+    if not text:
+        return ""
+    return text.translate(ARABIC_TO_ASCII)
+
 def extract_card_number(text: str) -> str | None:
     """
-    Extracts a 14 or 15 digit card number from the text, matching PHP implementation.
+    Extracts a 14 or 15 digit card number from the text.
+    Handles consecutive digits, formatted digit groups (with spaces, dashes, dots),
+    Eastern Arabic numerals, and keyword-anchored numbers.
     """
     if not text:
         return None
 
-    # 1. Direct match for 14-15 digits
+    text = normalize_text(text)
+    text_replaced = text.replace('الرقم الساري', 'الرقم السري')
+
+    # 1. Keyword-based search ("الرقم السري", "رمز التعبئة", "كود التعبئة", "PIN", "Voucher", etc.)
+    keywords = ['الرقم السري', 'رمز التعبئة', 'كود التعبئة', 'رقم الكارت', 'رقم التعبئة', 'PIN', 'Code', 'Voucher']
+    for kw in keywords:
+        if kw.lower() in text_replaced.lower():
+            idx = text_replaced.lower().find(kw.lower())
+            after = text_replaced[idx + len(kw):]
+            for line in after.split('\n'):
+                # Check for direct 14-15 digits
+                match = re.search(r'\b(\d{14,15})\b', line)
+                if match:
+                    return match.group(1)
+                # Check formatted digits on this line (e.g. 1234 5678 9012 345)
+                formatted = re.findall(r'(?:\b\d{1,6}[\s\-\.\/]+){2,8}\d{1,6}\b', line)
+                for cand in formatted:
+                    digits_only = re.sub(r'\D', '', cand)
+                    if len(digits_only) in (14, 15):
+                        return digits_only
+                # Check total digits in line
+                digits_in_line = re.sub(r'\D', '', line)
+                if len(digits_in_line) in (14, 15):
+                    return digits_in_line
+
+    # 2. Direct match for 14-15 consecutive digits
     match = re.search(r'\b(\d{14,15})\b', text)
     if match:
         return match.group(1)
 
-    # 2. "الرقم السري" logic
-    # PHP: str_replace('الرقم الساري', 'الرقم السري', $text)
-    text = text.replace('الرقم الساري', 'الرقم السري')
+    # 3. Match 14-15 digits formatted with spaces, dashes, dots, or slashes
+    pattern = r'(?:\b\d{1,6}[\s\-\.\/]+){2,8}\d{1,6}\b'
+    for candidate in re.findall(pattern, text):
+        digits_only = re.sub(r'\D', '', candidate)
+        if len(digits_only) in (14, 15):
+            return digits_only
 
-    if 'الرقم السري' in text:
-        # PHP: $ex = explode('الرقم السري', $rp);
-        parts = text.split('الرقم السري')
-        if len(parts) > 1:
-            # PHP: $ex1 = explode("\n", trim($ex[1]));
-            # PHP: if (isset($ex1[1])) ... match on $ex1[1]
-
-            # Note: PHP ex1[1] implies the line *after* the line containing "الرقم السري" (if split by newline)
-            # OR if "الرقم السري" is followed by newline immediately.
-            # Let's mimic PHP logic: trim the part after "الرقم السري", then split by newline.
-            after_keyword = parts[1].strip()
-            lines = after_keyword.split('\n')
-
-            if len(lines) > 1:
-                # The logic checks the *second* line (index 1)
-                potential_line = lines[1]
-                match = re.search(r'\b(\d{14,15})\b', potential_line)
-                if match:
-                    return match.group(1)
+    # 4. Fallback: If all digits in the text form exactly 14 or 15 digits
+    all_digits = re.sub(r'\D', '', text)
+    if len(all_digits) in (14, 15):
+        return all_digits
 
     return None

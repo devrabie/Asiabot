@@ -13,8 +13,40 @@ from loguru import logger
 from src.api.client import AsiacellClient
 from src.database.db_manager import DBManager
 from src.services.recharge_manager import RechargeManager
+from src.services.ocr_service import download_telegram_photo_bytes, extract_card_from_image_bytes
 from src.utils.card_parser import extract_card_number
 from src.bot.admin_handlers import admin_dashboard, get_admin_handlers
+from src.bot.ui_helpers import (
+    BTN_ICON_ABOUT,
+    BTN_ICON_ACCOUNTS,
+    BTN_ICON_ADD,
+    BTN_ICON_BACK,
+    BTN_ICON_CANCEL,
+    BTN_ICON_CHECK,
+    BTN_ICON_HOME,
+    BTN_ICON_PHONE,
+    BTN_ICON_PLANS,
+    BTN_ICON_RECHARGE,
+    BTN_ICON_REFRESH,
+    BTN_ICON_TRASH,
+    E_BOLT,
+    E_CARD,
+    E_CROWN,
+    E_DIAMOND,
+    E_ERROR,
+    E_GROWTH,
+    E_INFO,
+    E_PENDING,
+    E_ROCKET,
+    E_STAR,
+    E_STATS,
+    E_SUCCESS,
+    E_USER,
+    E_WARN,
+    btn,
+    build_card,
+    esc,
+)
 import aiohttp
 
 # States for Conversations
@@ -31,27 +63,56 @@ async def _safe_answer(query, text=None, show_alert=False):
         pass
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Sends the main menu."""
+    """Sends the main menu with a live status card and styled action buttons."""
     user = update.effective_user
     db = DBManager()
     await db.create_user_if_not_exists(user.id)
     await db.update_user_profile(user.id, user.username, user.first_name)
 
+    sub = await db.get_user_subscription(user.id)
+    accounts = await db.get_user_accounts(user.id)
+    primary = next((a["phone_number"] for a in accounts if a.get("is_primary_receiver")), None)
+
+    text_rem = max(0, (sub.get("max_text_recharges", 0) or 0) - (sub.get("text_recharges_count", 0) or 0))
+    img_rem = max(0, (sub.get("max_image_recharges", 0) or 0) - (sub.get("image_recharges_count", 0) or 0))
+
+    lines = [
+        f"{E_USER} <b>مرحباً بك</b> {esc(user.first_name or 'عزيزي')}!",
+        f"{E_DIAMOND} <b>الخطة:</b> <code>{esc(sub.get('name', 'Free'))}</code>",
+        f"{E_CARD} <b>الحسابات المسجلة:</b> <code>{len(accounts)}/{sub.get('max_accounts', 0)}</code>",
+        f"{E_BOLT} <b>الرصيد المتبقي للعمليات:</b> نصي <code>{text_rem}</code> • صوري <code>{img_rem}</code>",
+    ]
+    if primary:
+        lines.append(f"{E_SUCCESS} <b>المستلم الرئيسي:</b> <code>{esc(primary)}</code>")
+
+    card_text = build_card(
+        f"{E_CROWN} لوحة تحكم بوت آسياسيل",
+        lines,
+        footer="تلميح: يمكنك إرسال صورة الكرت مباشرة في أي وقت للشحن التلقائي",
+    )
+
     keyboard = [
-        [InlineKeyboardButton("📱 حساباتي", callback_data="my_accounts")],
-        [InlineKeyboardButton("➕ إضافة حساب جديد", callback_data="add_account_start")],
-        [InlineKeyboardButton("💳 شحن رصيد", callback_data="start_recharge")],
-        [InlineKeyboardButton("💎 الخطط", callback_data="show_plans")],
-        [InlineKeyboardButton("ℹ️ حول البوت", callback_data="about")],
+        [btn("شحن رصيد", "start_recharge", BTN_ICON_RECHARGE, "success")],
+        [
+            btn("حساباتي", "my_accounts", BTN_ICON_ACCOUNTS, "primary"),
+            btn("إضافة حساب", "add_account_start", BTN_ICON_ADD, "success"),
+        ],
+        [
+            btn("الخطط", "show_plans", BTN_ICON_PLANS, "primary"),
+            btn("حول البوت", "about", BTN_ICON_ABOUT, "primary"),
+        ],
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
 
-    # Check if this is a callback or a new message
     if update.callback_query:
         await _safe_answer(update.callback_query)
-        await update.callback_query.edit_message_text("مرحباً بك في بوت آسياسيل! اختر من القائمة:", reply_markup=reply_markup)
+        await update.callback_query.edit_message_text(
+            card_text, parse_mode="HTML", reply_markup=reply_markup
+        )
     else:
-        await update.message.reply_text("مرحباً بك في بوت آسياسيل! اختر من القائمة:", reply_markup=reply_markup)
+        await update.message.reply_text(
+            card_text, parse_mode="HTML", reply_markup=reply_markup
+        )
 
 async def main_menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Callback wrapper for returning to main menu."""
@@ -63,42 +124,46 @@ def _escape_markdown(text: str) -> str:
     return str(text).replace("_", "\\_").replace("*", "\\*")
 
 async def _get_user_status_text(user_id: int) -> str:
-    """Helper to generate only the current subscription status text."""
+    """Helper to generate the current subscription status card in HTML."""
     db = DBManager()
     user_sub = await db.get_user_subscription(user_id)
-
-    text = "📊 **حالة اشتراكك الحالية**\n\n"
-    text += f"الخطة: **{_escape_markdown(user_sub['name'])}**\n"
-    text += f"🔢 عدد الحسابات: `{user_sub['max_accounts']}`\n"
-    text += f"📝 شحن نصي: `{user_sub.get('text_recharges_count', 0)}/{user_sub.get('max_text_recharges', 0)}`\n"
-    text += f"📸 شحن صوري: `{user_sub.get('image_recharges_count', 0)}/{user_sub.get('max_image_recharges', 0)}`\n"
-
-    # Add expiry if available
     user_data = await db.get_user_by_id(user_id)
-    if user_data and user_data.get('plan_expiry'):
-        text += f"📅 تاريخ الانتهاء: `{user_data['plan_expiry']}`\n"
 
-    return text
+    lines = [
+        f"{E_DIAMOND} <b>الخطة:</b> <code>{esc(user_sub['name'])}</code>",
+        f"{E_CARD} <b>حد الحسابات:</b> <code>{user_sub['max_accounts']}</code>",
+        f"{E_BOLT} <b>شحن نصي:</b> <code>{user_sub.get('text_recharges_count', 0)}/{user_sub.get('max_text_recharges', 0)}</code>",
+        f"{E_STAR} <b>شحن صوري:</b> <code>{user_sub.get('image_recharges_count', 0)}/{user_sub.get('max_image_recharges', 0)}</code>",
+    ]
+    if user_data and user_data.get('plan_expiry'):
+        lines.append(f"{E_INFO} <b>تاريخ الانتهاء:</b> <code>{esc(user_data['plan_expiry'])}</code>")
+
+    return build_card(f"{E_STATS} حالة اشتراكك الحالية", lines)
 
 async def _get_available_plans_text() -> str:
-    """Helper to generate the list of available plans."""
+    """Helper to generate the list of available plans in HTML."""
     db = DBManager()
     plans = await db.get_plans()
 
-    text = "💎 **الخطط المتاحة**\n\n"
+    lines = []
     for plan in plans:
-        text += f"🔹 **{_escape_markdown(plan['name'])}**\n"
-        text += f"   💰 السعر: `{plan['price']} IQD`\n"
-        text += f"   🔢 عدد الحسابات: `{plan['max_accounts']}`\n"
-        text += f"   📝 شحن نصي: `{plan.get('max_text_recharges')}`\n"
-        text += f"   📸 شحن صوري: `{plan.get('max_image_recharges')}`\n"
+        lines.append(f"{E_CROWN} <b>{esc(plan['name'])}</b> — <code>{plan['price']} IQD</code>")
+        lines.append(
+            f"   {E_CARD} حسابات: <code>{plan['max_accounts']}</code> | "
+            f"نصي: <code>{plan.get('max_text_recharges')}</code> | "
+            f"صوري: <code>{plan.get('max_image_recharges')}</code>"
+        )
         if plan['description']:
-            text += f"   ℹ️ {_escape_markdown(plan['description'])}\n"
-        text += "\n"
+            lines.append(f"   <i>{esc(plan['description'])}</i>")
+        lines.append("")
 
     subscribe_message = await db.get_setting("subscribe_message", "للاشتراك يرجى التواصل مع الدعم.")
-    text += f"\n{subscribe_message}"
-    return text
+    return build_card(
+        f"{E_DIAMOND} الخطط المتاحة",
+        lines,
+        footer=esc(subscribe_message),
+        expandable_footer=False,
+    )
 
 async def about_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Shows about info."""
@@ -106,12 +171,20 @@ async def about_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await _safe_answer(query)
 
     db = DBManager()
-    text = await db.get_setting("about_text", "🤖 **Asiabot**\nبوت لإدارة حسابات آسياسيل.\nيمكنك مراقبة الرصيد وتجديد الرموز تلقائياً.\n\nDev: @YourUsername")
+    raw_text = await db.get_setting(
+        "about_text",
+        "بوت احترافي لإدارة حسابات آسياسيل، مراقبة الرصيد، وتعبئة الكروت نصياً وبالصور تلقائياً.",
+    )
+    card_text = build_card(
+        f"{E_INFO} حول البوت",
+        [esc(raw_text)],
+        footer="جاهز لخدمتك على مدار الساعة",
+    )
 
-    keyboard = [[InlineKeyboardButton("🔙 رجوع", callback_data="main_menu")]]
+    keyboard = [[btn("رجوع", "main_menu", BTN_ICON_BACK, "primary")]]
     reply_markup = InlineKeyboardMarkup(keyboard)
 
-    await query.edit_message_text(text=text, parse_mode="Markdown", reply_markup=reply_markup)
+    await query.edit_message_text(text=card_text, parse_mode="HTML", reply_markup=reply_markup)
 
 async def my_accounts_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Lists user accounts."""
@@ -123,17 +196,25 @@ async def my_accounts_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
     accounts = await db.get_user_accounts(user_id)
 
     keyboard = []
+    lines = []
     if accounts:
+        lines.append(f"{E_USER} لديك <code>{len(accounts)}</code> حسابات مسجلة. اختر حساباً للإدارة:")
         for acc in accounts:
             phone = acc["phone_number"]
-            keyboard.append([InlineKeyboardButton(f"📱 {phone}", callback_data=f"acc_{phone}")])
+            is_primary = acc.get("is_primary_receiver", 0)
+            label = f"{phone} (رئيسي)" if is_primary else phone
+            icon = BTN_ICON_CHECK if is_primary else BTN_ICON_PHONE
+            style = "success" if is_primary else "primary"
+            keyboard.append([btn(label, f"acc_{phone}", icon, style)])
     else:
-        keyboard.append([InlineKeyboardButton("لا توجد حسابات مسجلة", callback_data="noop")])
+        lines.append(f"{E_WARN} لا توجد حسابات مسجلة حالياً.")
+        keyboard.append([btn("إضافة حساب جديد", "add_account_start", BTN_ICON_ADD, "success")])
 
-    keyboard.append([InlineKeyboardButton("🔙 رجوع", callback_data="main_menu")])
+    keyboard.append([btn("رجوع", "main_menu", BTN_ICON_BACK, "primary")])
     reply_markup = InlineKeyboardMarkup(keyboard)
 
-    await query.edit_message_text("اختر حساباً لإدارته:", reply_markup=reply_markup)
+    card_text = build_card(f"{E_CARD} حساباتي", lines)
+    await query.edit_message_text(card_text, parse_mode="HTML", reply_markup=reply_markup)
 
 async def account_details_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Shows details for a specific account, verifying and refreshing data live."""
@@ -241,39 +322,37 @@ async def account_details_handler(update: Update, context: ContextTypes.DEFAULT_
         else:
              details_text += f"❌ خطأ في الاتصال: {str(e)}\n"
 
-    # Reload account from DB to get latest stored values (if updated)
     account = await db.get_account(phone, user_id)
     current_balance = account.get("current_balance", 0.0)
 
-    details_text += f"💰 **الرصيد:** `{current_balance:,.2f} IQD`\n"
+    lines = [
+        f"{E_CARD} <b>الرقم:</b> <code>{esc(phone)}</code>",
+        f"{E_GROWTH} <b>الرصيد الحالي:</b> <code>{current_balance:,.2f} IQD</code>",
+    ]
     if 'name' in account_info:
-        details_text += f"👤 **الاسم:** {account_info['name']}\n"
+        lines.append(f"{E_USER} <b>الاسم:</b> {esc(account_info['name'])}")
     if 'expiry' in account_info:
-        details_text += f"📅 **صالح لغاية:** {account_info['expiry']}\n"
+        lines.append(f"{E_INFO} <b>صالح لغاية:</b> <code>{esc(account_info['expiry'])}</code>")
 
-    # Balance comparison logic (PHP: notify if changed)
-    # Since we updated DB above, current_balance is the latest.
-    # The previous balance logic is handled implicitly by update_balance overwriting it,
-    # but to show "change" we would need to know the *previous* state before update.
-    # For now, just showing current is sufficient as per basic requirement.
-
-    # Buttons
-    keyboard = []
-    keyboard.append([InlineKeyboardButton("🔄 تحديث معلومات الحساب", callback_data=f"refresh_{phone}")])
-
-    # Primary Receiver Toggle
     is_primary = account.get("is_primary_receiver", 0)
     if is_primary:
-        keyboard.append([InlineKeyboardButton("✅ هذا هو الحساب الرئيسي للاستقبال", callback_data="noop")])
-    else:
-        keyboard.append([InlineKeyboardButton("📥 تعيين كـ مستقبل رئيسي", callback_data=f"setprimary_{phone}")])
+        lines.append(f"{E_SUCCESS} <b>الحالة:</b> المستقبل الرئيسي للرصيد")
 
-    keyboard.append([InlineKeyboardButton("🗑️ حذف الحساب", callback_data=f"delconf_{phone}")])
-    keyboard.append([InlineKeyboardButton("🔙 رجوع", callback_data="my_accounts")])
+    card_text = build_card(f"{E_STATS} تفاصيل حساب آسياسيل", lines)
+
+    keyboard = [
+        [btn("تحديث البيانات", f"refresh_{phone}", BTN_ICON_REFRESH, "primary")],
+    ]
+    if not is_primary:
+        keyboard.append([btn("تعيين كمستقبل رئيسي", f"setprimary_{phone}", BTN_ICON_CHECK, "success")])
+
+    keyboard.append([
+        btn("حذف الحساب", f"delconf_{phone}", BTN_ICON_TRASH, "danger"),
+        btn("رجوع", "my_accounts", BTN_ICON_BACK, "primary"),
+    ])
 
     reply_markup = InlineKeyboardMarkup(keyboard)
-
-    await query.edit_message_text(text=details_text, parse_mode="Markdown", reply_markup=reply_markup)
+    await query.edit_message_text(text=card_text, parse_mode="HTML", reply_markup=reply_markup)
 
 async def refresh_balance_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Refreshes balance for an account by reusing detailed view logic."""
@@ -286,15 +365,19 @@ async def delete_confirm_handler(update: Update, context: ContextTypes.DEFAULT_T
     await _safe_answer(query)
     phone = query.data.split("_")[1]
 
-    text = f"هل أنت متأكد من حذف الحساب `{phone}`؟"
+    text = build_card(
+        f"{E_WARN} تأكيد حذف الحساب",
+        [f"هل أنت متأكد من حذف الحساب <code>{esc(phone)}</code>؟"],
+        footer="لا يمكن التراجع عن هذه العملية بعد التأكيد",
+    )
     keyboard = [
         [
-            InlineKeyboardButton("نعم، احذف", callback_data=f"delaction_{phone}"),
-            InlineKeyboardButton("لا، إلغاء", callback_data=f"acc_{phone}")
+            btn("نعم، احذف", f"delaction_{phone}", BTN_ICON_TRASH, "danger"),
+            btn("تراجع", f"acc_{phone}", BTN_ICON_BACK, "primary"),
         ]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
-    await query.edit_message_text(text=text, parse_mode="Markdown", reply_markup=reply_markup)
+    await query.edit_message_text(text=text, parse_mode="HTML", reply_markup=reply_markup)
 
 async def delete_action_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Deletes the account."""
@@ -316,16 +399,13 @@ async def delete_action_handler(update: Update, context: ContextTypes.DEFAULT_TY
 async def set_primary_receiver_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Sets the account as primary receiver."""
     query = update.callback_query
-    await _safe_answer(query)
-
     phone = query.data.split("_")[1]
     user_id = query.from_user.id
 
     db = DBManager()
     await db.set_primary_receiver(user_id, phone)
 
-    await query.message.reply_text(f"✅ تم تعيين الحساب {phone} كمستقبل رئيسي للرصيد.")
-    # Refresh view
+    await _safe_answer(query, f"✅ تم تعيين {phone} كمستقبل رئيسي", show_alert=False)
     await account_details_handler(update, context)
 
 # --- Recharge Conversation Handlers ---
@@ -337,31 +417,40 @@ async def start_recharge(update: Update, context: ContextTypes.DEFAULT_TYPE):
     accounts = await db.get_user_accounts(user_id)
 
     if not accounts:
-        text = "❌ لا توجد حسابات مضافة. الرجاء إضافة رقم آسياسيل أولاً."
-        keyboard = [[InlineKeyboardButton("➕ إضافة حساب جديد", callback_data="add_account_start")]]
+        text = build_card(
+            f"{E_WARN} لا توجد حسابات مضافة",
+            ["الرجاء إضافة رقم آسياسيل أولاً قبل البدء بالشحن."],
+        )
+        keyboard = [
+            [btn("إضافة حساب جديد", "add_account_start", BTN_ICON_ADD, "success")],
+            [btn("رجوع", "main_menu", BTN_ICON_BACK, "primary")],
+        ]
         reply_markup = InlineKeyboardMarkup(keyboard)
 
         if update.callback_query:
-            await update.callback_query.answer()
-            await update.callback_query.message.reply_text(text, reply_markup=reply_markup)
+            await _safe_answer(update.callback_query)
+            await update.callback_query.edit_message_text(text, parse_mode="HTML", reply_markup=reply_markup)
         else:
-            await update.message.reply_text(text, reply_markup=reply_markup)
+            await update.message.reply_text(text, parse_mode="HTML", reply_markup=reply_markup)
         return ConversationHandler.END
 
-    text = (
-        "💳 **شحن رصيد**\n\n"
-        "قم بإرسال رقم الكارت (14 أو 15 رقم).\n"
-        "يمكنك إرسال رقم الكارت كتابةً أو صورة الكارت."
+    text = build_card(
+        f"{E_BOLT} شحن رصيد",
+        [
+            f"{E_CARD} قم بإرسال رقم الكرت (14 أو 15 رقم) كتابةً.",
+            f"{E_ROCKET} أو أرسل <b>صورة الكرت</b> وسأستخرج الرقم وأشحنه تلقائياً.",
+        ],
+        footer="يمكنك الإلغاء في أي وقت من الزر أدناه",
     )
 
-    keyboard = [[InlineKeyboardButton("🔙 إلغاء", callback_data="cancel_conv")]]
+    keyboard = [[btn("إلغاء", "cancel_conv", BTN_ICON_CANCEL, "danger")]]
     reply_markup = InlineKeyboardMarkup(keyboard)
 
     if update.callback_query:
         await _safe_answer(update.callback_query)
-        await update.callback_query.edit_message_text(text, parse_mode="Markdown", reply_markup=reply_markup)
+        await update.callback_query.edit_message_text(text, parse_mode="HTML", reply_markup=reply_markup)
     else:
-        await update.message.reply_text(text, parse_mode="Markdown", reply_markup=reply_markup)
+        await update.message.reply_text(text, parse_mode="HTML", reply_markup=reply_markup)
     return RECHARGE_INPUT
 
 async def recharge_input_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -372,32 +461,36 @@ async def recharge_input_handler(update: Update, context: ContextTypes.DEFAULT_T
 
     text = ""
     feature_type = "text"
+    code = None
+    status_msg = None
 
     if update.message.text:
         if sub['text_recharges_count'] >= sub['max_text_recharges']:
-             text = "❌ لقد وصلت للحد الأقصى المسموح به لشحن الكروت عبر النص في خطتك.\n\n"
+             text = f"{E_ERROR} <b>لقد وصلت للحد الأقصى المسموح به لشحن الكروت عبر النص في خطتك.</b>\n\n"
              text += await _get_user_status_text(user_id)
-             keyboard = [[InlineKeyboardButton("🔙 رجوع", callback_data="main_menu")]]
-             await update.message.reply_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
+             keyboard = [[btn("رجوع", "main_menu", BTN_ICON_BACK, "primary")]]
+             await update.message.reply_text(text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard))
              return ConversationHandler.END
         text = update.message.text
     elif update.message.photo:
         if sub['image_recharges_count'] >= sub['max_image_recharges']:
-             text = "❌ لقد وصلت للحد الأقصى المسموح به لشحن الكروت عبر الصور في خطتك.\n\n"
+             text = f"{E_ERROR} <b>لقد وصلت للحد الأقصى المسموح به لشحن الكروت عبر الصور في خطتك.</b>\n\n"
              text += await _get_user_status_text(user_id)
-             keyboard = [[InlineKeyboardButton("🔙 رجوع", callback_data="main_menu")]]
-             await update.message.reply_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
+             keyboard = [[btn("رجوع", "main_menu", BTN_ICON_BACK, "primary")]]
+             await update.message.reply_text(text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard))
              return ConversationHandler.END
         feature_type = "image"
-        await update.message.reply_text("⏳ جاري تحليل الصورة واستخراج الكود...")
+        status_msg = await update.message.reply_text(
+            f"{E_PENDING} <b>جاري تحليل الصورة واستخراج رقم الكرت...</b>",
+            parse_mode="HTML",
+        )
         try:
-            photo = update.message.photo[-1]
-            file = await context.bot.get_file(photo.file_id)
-            async with AsiacellClient() as client:
-                text = await client.extract_text_from_image_url(file.file_path)
+            largest_photo = update.message.photo[-1]
+            image_bytes = await download_telegram_photo_bytes(context.bot, largest_photo.file_id)
+            code, text = await extract_card_from_image_bytes(image_bytes)
         except Exception as e:
             logger.error(f"Failed to process photo: {e}")
-            await update.message.reply_text("❌ حدث خطأ أثناء معالجة الصورة.")
+            await status_msg.edit_text(f"{E_ERROR} <b>حدث خطأ أثناء معالجة الصورة.</b>", parse_mode="HTML")
             return RECHARGE_INPUT
 
     # Fallback to caption if available and OCR didn't find anything (or it wasn't a photo)
@@ -405,27 +498,43 @@ async def recharge_input_handler(update: Update, context: ContextTypes.DEFAULT_T
         text = update.message.caption
 
     # Extract code using robust logic
-    code = extract_card_number(text)
+    if not code:
+        code = extract_card_number(text)
+
+    # Secondary fallback to caption if OCR returned text but no valid card code was extracted
+    if not code and update.message.caption:
+        code = extract_card_number(update.message.caption)
 
     if not code:
-        await update.message.reply_text("❌ لم يتم العثور على كود صالح. يرجى إرسال كود يتكون من 14 أو 15 رقم.")
+        err_text = f"{E_ERROR} <b>لم يتم العثور على كود صالح.</b> يرجى إرسال كود يتكون من 14 أو 15 رقم."
+        if status_msg:
+            await status_msg.edit_text(err_text, parse_mode="HTML")
+        else:
+            await update.message.reply_text(err_text, parse_mode="HTML")
         return RECHARGE_INPUT
 
-    msg = await update.message.reply_text(f"🔄 جاري معالجة الكود: `{code}` ...", parse_mode="Markdown")
+    processing_text = f"{E_PENDING} <b>جاري شحن الكود:</b> <code>{esc(code)}</code> ..."
+    if status_msg:
+        msg = await status_msg.edit_text(processing_text, parse_mode="HTML")
+    else:
+        msg = await update.message.reply_text(processing_text, parse_mode="HTML")
+
+    post_keyboard = InlineKeyboardMarkup([
+        [
+            btn("شحن كرت آخر", "start_recharge", BTN_ICON_RECHARGE, "success"),
+            btn("القائمة الرئيسية", "main_menu", BTN_ICON_HOME, "primary"),
+        ]
+    ])
 
     try:
         recharge_manager = RechargeManager()
         result_message = await recharge_manager.process_smart_recharge(user_id, code)
-
-        # Only increment if it looks like a valid attempt (even if unconfirmed by balance)
-        # If it was an explicit failure like "invalid card", we still count it as a "use" of the feature?
-        # User request says "number of times using features", so yes.
         await db.increment_usage(user_id, feature_type)
 
-        await msg.edit_text(result_message, parse_mode="Markdown")
+        await msg.edit_text(result_message, parse_mode="HTML", reply_markup=post_keyboard)
     except Exception as e:
         logger.exception(f"Recharge failed: {e}")
-        await msg.edit_text(f"❌ حدث خطأ غير متوقع: {e}")
+        await msg.edit_text(f"{E_ERROR} <b>حدث خطأ غير متوقع:</b> {esc(e)}", parse_mode="HTML", reply_markup=post_keyboard)
 
     return ConversationHandler.END
 
@@ -439,8 +548,8 @@ async def show_plans_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
     plans_text = await _get_available_plans_text()
 
     full_text = f"{status_text}\n\n{plans_text}"
-    keyboard = [[InlineKeyboardButton("🔙 رجوع", callback_data="main_menu")]]
-    await query.edit_message_text(text=full_text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
+    keyboard = [[btn("رجوع", "main_menu", BTN_ICON_BACK, "primary")]]
+    await query.edit_message_text(text=full_text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard))
 
 # --- Add Account Conversation ---
 
@@ -648,5 +757,7 @@ def get_handlers():
         add_account_conv,
         recharge_conv,
         CommandHandler("start", start),
-        CommandHandler("admin", admin_dashboard)
-    ] + admin_handlers + callback_handlers
+        CommandHandler("admin", admin_dashboard),
+    ] + admin_handlers + callback_handlers + [
+        MessageHandler(filters.PHOTO, recharge_input_handler),
+    ]
