@@ -22,8 +22,13 @@ def _resolve_local_file_path(file_path: str) -> Optional[str]:
         return None
     if os.path.isfile(file_path):
         return file_path
-    if file_path.startswith(LOCAL_BOT_API_CONTAINER_PREFIX):
-        mapped = LOCAL_BOT_API_HOST_PREFIX + file_path[len(LOCAL_BOT_API_CONTAINER_PREFIX):]
+    # PTB's get_file() may prepend base_file_url before '/var/lib/telegram-bot-api/...'
+    if LOCAL_BOT_API_CONTAINER_PREFIX in file_path:
+        suffix = file_path.split(LOCAL_BOT_API_CONTAINER_PREFIX, 1)[1]
+        container_path = LOCAL_BOT_API_CONTAINER_PREFIX + suffix
+        if os.path.isfile(container_path):
+            return container_path
+        mapped = LOCAL_BOT_API_HOST_PREFIX + suffix
         if os.path.isfile(mapped):
             return mapped
     return None

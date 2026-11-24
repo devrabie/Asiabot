@@ -68,6 +68,9 @@ def test_resolve_local_file_path_maps_container_volume(tmp_path, monkeypatch):
     resolved = _resolve_local_file_path("/var/lib/telegram-bot-api/123:ABC/photos/file_1.jpg")
     assert resolved == str(sample)
 
+    wrapped = "https://api.telegram.org/file/bot123:ABC//var/lib/telegram-bot-api/123:ABC/photos/file_1.jpg"
+    assert _resolve_local_file_path(wrapped) == str(sample)
+
 
 def test_parse_ocr_space_response():
     payload = {
